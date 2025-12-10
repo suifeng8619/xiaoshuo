@@ -1,0 +1,187 @@
+# 任务配置
+
+# ==================== 新手引导任务 ====================
+starter_quests:
+  - id: first_step
+    name: 踏入修仙路
+    type: main
+    description: 你刚刚来到这个世界，还是一个普通凡人。去找村长王老了解一下这个世界吧。
+    giver: village_elder
+    level_required: 0
+    auto_accept: true  # 自动接取
+    objectives:
+      - id: talk_elder
+        type: talk
+        target: village_elder
+        description: 与村长王老交谈
+        required: 1
+    rewards:
+      exp: 50
+      gold: 20
+      items:
+        - id: basic_cultivation_manual
+          name: 吐纳心法
+          type: skill_book
+          skill_id: meditation
+    next_quest: first_battle  # 完成后自动触发下一个任务
+
+  - id: first_battle
+    name: 初战野狼
+    type: main
+    description: 王老说村外小路最近有野狼出没，威胁村民安全。去消灭几只野狼，证明你的实力吧。
+    giver: village_elder
+    level_required: 0
+    objectives:
+      - id: kill_wolves
+        type: kill
+        target: wild_wolf
+        description: 击杀野狼
+        required: 3
+    rewards:
+      exp: 100
+      gold: 50
+      items:
+        - id: healing_pill_low
+          name: 下品回血丹
+          count: 5
+    next_quest: gather_herbs
+
+  - id: gather_herbs
+    name: 采集灵草
+    type: main
+    description: 王老看你有些天赋，让你去后山采集一些灵草，这是修炼的基础材料。
+    giver: village_elder
+    level_required: 0
+    objectives:
+      - id: gather_common_herb
+        type: gather
+        target: common_herb
+        description: 采集普通灵草
+        required: 3
+      - id: gather_spirit_herb
+        type: gather
+        target: spirit_herb
+        description: 采集聚灵草
+        required: 1
+    rewards:
+      exp: 80
+      gold: 30
+      items:
+        - id: qi_gathering_pill
+          name: 聚气丹
+          description: 服用后获得少量修为
+          consumable: true
+          effects:
+            exp: 100
+    next_quest: first_cultivation
+
+  - id: first_cultivation
+    name: 初窥门径
+    type: main
+    description: 你已经具备了修炼的基础条件。找个安静的地方，尝试打坐修炼，感受天地灵气吧。
+    giver: village_elder
+    level_required: 0
+    objectives:
+      - id: cultivate
+        type: cultivate
+        description: 进行修炼
+        required: 3
+    rewards:
+      exp: 150
+      gold: 0
+      attribute_points: 3
+    next_quest: first_breakthrough
+
+  - id: first_breakthrough
+    name: 踏入修仙
+    type: main
+    description: 你的修为已经足够了，是时候尝试突破到炼气期，正式踏入修仙之路！
+    giver: village_elder
+    level_required: 0
+    required_realm: mortal  # 需要是凡人境界才能接
+    objectives:
+      - id: breakthrough
+        type: breakthrough
+        description: 突破到炼气期
+        required: 1
+    rewards:
+      exp: 200
+      gold: 100
+      items:
+        - id: qi_blade_manual
+          name: 气刃术秘籍
+          type: skill_book
+          skill_id: qi_blade
+
+# ==================== 支线任务 ====================
+side_quests:
+  - id: bandit_trouble
+    name: 山贼之患
+    type: side
+    description: 听说荒野有山贼出没，抢劫过往行人。去清剿几个山贼，为民除害吧。
+    giver: shop_owner
+    level_required: 0
+    objectives:
+      - id: kill_bandits
+        type: kill
+        target: bandit
+        description: 击杀山贼
+        required: 5
+    rewards:
+      exp: 150
+      gold: 80
+
+  - id: cave_exploration
+    name: 山洞探险
+    type: side
+    description: 村民说后山的山洞里似乎有什么东西，去探索一下吧。小心里面的穴熊！
+    giver: village_elder
+    level_required: 0
+    required_realm: qi_refining  # 需要炼气期
+    objectives:
+      - id: kill_cave_bear
+        type: kill
+        target: cave_bear
+        description: 击败穴熊
+        required: 1
+      - id: explore_cave_depths
+        type: explore
+        target: cave_depths
+        description: 探索山洞深处
+        required: 1
+    rewards:
+      exp: 300
+      gold: 200
+      items:
+        - id: spirit_stone
+          name: 下品灵石
+          count: 3
+
+# ==================== 每日任务 ====================
+daily_quests:
+  - id: daily_cultivation
+    name: 每日修炼
+    type: daily
+    description: 修炼是修士的日常，每天坚持修炼可以获得额外奖励。
+    objectives:
+      - id: cultivate_daily
+        type: cultivate
+        description: 进行修炼
+        required: 5
+    rewards:
+      exp: 50
+      gold: 10
+
+  - id: daily_hunt
+    name: 每日狩猎
+    type: daily
+    description: 猎杀一些野兽，既能锻炼战斗技巧，又能获得材料。
+    objectives:
+      - id: kill_any
+        type: kill
+        target: any
+        description: 击杀任意怪物
+        required: 5
+    rewards:
+      exp: 80
+      gold: 30
