@@ -37,6 +37,22 @@ class Game:
         self.config = self.state.load_config(self.config_dir / "cultivation.yaml")
         self.skills_config = self.state.load_config(self.config_dir / "skills.yaml")
         self.monsters_config = self.state.load_config(self.config_dir / "monsters.yaml")
+        self.scenes_config = self.state.load_config(self.config_dir / "scenes.yaml")
+        self.quests_config = self.state.load_config(self.config_dir / "quests.yaml")
+
+        # 构建场景索引（按名称和ID都可以查找）
+        self.scenes_by_id = {}
+        self.scenes_by_name = {}
+        for category in ['starter_area', 'advanced_area']:
+            for scene in self.scenes_config.get(category, []):
+                self.scenes_by_id[scene['id']] = scene
+                self.scenes_by_name[scene['name']] = scene
+
+        # 构建任务索引
+        self.quests_by_id = {}
+        for category in ['starter_quests', 'side_quests', 'daily_quests']:
+            for quest in self.quests_config.get(category, []):
+                self.quests_by_id[quest['id']] = quest
 
         # 初始化规则引擎
         self.rules = RulesEngine(self.config)
@@ -70,8 +86,16 @@ class Game:
             'talk': self.cmd_talk,
             'attack': self.cmd_attack,
             'skill': self.cmd_skill,
+            'defend': self.cmd_defend,
             'use': self.cmd_use,
             'flee': self.cmd_flee,
+            'search': self.cmd_search,
+            'examine': self.cmd_examine,
+            'rest': self.cmd_rest,
+            'shop': self.cmd_shop,
+            'buy': self.cmd_buy,
+            'sell': self.cmd_sell,
+            'quest': self.cmd_quest,
             'cultivate': self.cmd_cultivate,
             'breakthrough': self.cmd_breakthrough,
             'addpoint': self.cmd_addpoint,
@@ -90,9 +114,13 @@ class Game:
             't': 'talk',
             'a': 'attack',
             'k': 'skill',
+            'd': 'defend',
             'u': 'use',
             'f': 'flee',
             'run': 'flee',
+            'e': 'examine',
+            'x': 'examine',
+            'r': 'rest',
             'c': 'cultivate',
             'b': 'breakthrough',
             'ap': 'addpoint',
@@ -534,6 +562,478 @@ class Game:
                     if not self.character.data.get('status', {}).get('is_alive', True):
                         break
 
+    def cmd_defend(self, args: list) -> None:
+        """防御姿态"""
+        if not self.in_combat:
+            self._print("\n你没有在战斗中，不需要防御。")
+            return
+
+        # 进入防御状态，减少受到的伤害
+        self.character.data['status']['is_defending'] = True
+        self._print("\n『你摆出防御姿态，准备格挡攻击！』")
+        self._print("（下回合受到的伤害减少50%）")
+
+        # 敌人攻击
+        for enemy in self.combat_enemies:
+            if enemy.get('is_alive', True):
+                self._enemy_turn(enemy, player_defending=True)
+                if not self.character.data.get('status', {}).get('is_alive', True):
+                    break
+
+        # 防御状态在回合结束后解除
+        self.character.data['status']['is_defending'] = False
+        self._update_combat_state()
+
+    def cmd_search(self, args: list) -> None:
+        """搜索当前区域"""
+        if self.in_combat:
+            self._print("\n战斗中无法搜索！")
+            return
+
+        world_state = self.state.get('world', {})
+        current_scene = world_state.get('current_scene', {})
+        scene_name = current_scene.get('name', '')
+        danger_level = current_scene.get('danger_level', 'safe')
+
+        # 安全区域不会遇敌
+        if danger_level == 'safe':
+            self._print("\n你仔细搜索了一番，这里很安全，没有发现任何危险。")
+            return
+
+        self._print("\n你警惕地搜索着四周...")
+
+        # 搜索时遇敌概率更高
+        search_encounter_rates = {
+            'low': 0.6,
+            'medium': 0.8,
+            'high': 0.95,
+            'dangerous': 1.0
+        }
+        encounter_rate = search_encounter_rates.get(danger_level, 0.5)
+
+        if random.random() < encounter_rate:
+            monsters = self._force_encounter(scene_name)
+            if monsters:
+                self._trigger_encounter(monsters)
+            else:
+                self._print("搜索了一会儿，没有发现什么。")
+        else:
+            self._print("搜索了一会儿，暂时没有发现敌人的踪迹。")
+
+    def _force_encounter(self, scene_name: str) -> list:
+        """强制生成遭遇（用于搜索）"""
+        spawn_data = self.monsters_config.get('spawn_locations', {}).get(scene_name)
+        if not spawn_data:
+            return []
+
+        # 随机选择一种怪物
+        monster_spawns = spawn_data.get('monsters', [])
+        if not monster_spawns:
+            return []
+
+        # 按权重选择
+        total_chance = sum(m.get('spawn_chance', 0.1) for m in monster_spawns)
+        roll = random.random() * total_chance
+        cumulative = 0
+
+        for spawn_info in monster_spawns:
+            cumulative += spawn_info.get('spawn_chance', 0.1)
+            if roll <= cumulative:
+                monster_id = spawn_info['id']
+                max_count = spawn_info.get('max_count', 1)
+                count = random.randint(1, max_count)
+
+                monster_template = self._get_monster_by_id(monster_id)
+                if monster_template:
+                    monsters = []
+                    for _ in range(count):
+                        monster = monster_template.copy()
+                        monster['_runtime_id'] = f"{monster_id}_{random.randint(1000, 9999)}"
+                        monster['is_alive'] = True
+                        monsters.append(monster)
+                    return monsters
+
+        return []
+
+    def cmd_examine(self, args: list) -> None:
+        """检查场景中的物品或特征"""
+        if not args:
+            self._print("\n请指定要检查的对象。用法: examine <对象>")
+            return
+
+        target_name = " ".join(args)
+
+        world_state = self.state.get('world', {})
+        current_scene = world_state.get('current_scene', {})
+        features_detail = current_scene.get('features_detail', [])
+
+        # 查找目标特征
+        target_feature = None
+        for feature in features_detail:
+            if feature['name'] == target_name:
+                target_feature = feature
+                break
+
+        if not target_feature:
+            self._print(f"\n这里没有 {target_name}。")
+            return
+
+        # 显示描述
+        self._print(f"\n【{target_feature['name']}】")
+        self._print(target_feature.get('description', '没什么特别的。'))
+
+        # 检查是否有额外文本
+        if 'examine_text' in target_feature:
+            self._print(f"\n{target_feature['examine_text']}")
+
+        # 检查是否可以采集
+        if target_feature.get('interaction') == 'gather':
+            self._handle_gather(target_feature)
+
+        # 检查是否可以搜索
+        if target_feature.get('interaction') == 'search':
+            self._handle_search_feature(target_feature)
+
+    def _handle_gather(self, feature: dict) -> None:
+        """处理采集"""
+        gather_items = feature.get('gather_items', [])
+        if not gather_items:
+            return
+
+        self._print("\n你尝试采集...")
+
+        inv_data = self.state.get('inventory', {})
+        inventory = Inventory(inv_data)
+        gathered_any = False
+
+        for item_info in gather_items:
+            if random.random() < item_info.get('chance', 0.5):
+                item = {
+                    'id': item_info['id'],
+                    'name': item_info['name'],
+                    'count': 1,
+                    'stackable': True,
+                    'quality': 'common'
+                }
+                inventory.add_item(item)
+                self._print(f"『获得 {item['name']} x1』")
+                gathered_any = True
+
+        if not gathered_any:
+            self._print("没有采集到什么有用的东西。")
+        else:
+            self.state.set('inventory', inventory.to_dict())
+
+    def _handle_search_feature(self, feature: dict) -> None:
+        """处理搜索特征点"""
+        search_items = feature.get('search_items', [])
+        if not search_items:
+            return
+
+        self._print("\n你仔细搜索...")
+
+        inv_data = self.state.get('inventory', {})
+        inventory = Inventory(inv_data)
+        found_any = False
+
+        for item_info in search_items:
+            if random.random() < item_info.get('chance', 0.3):
+                count_range = item_info.get('count', [1, 1])
+                if isinstance(count_range, list):
+                    count = random.randint(count_range[0], count_range[1])
+                else:
+                    count = count_range
+
+                item = {
+                    'id': item_info['id'],
+                    'name': item_info['name'],
+                    'count': count,
+                    'stackable': True,
+                    'quality': 'common'
+                }
+                inventory.add_item(item)
+                item_name = item["name"]
+                self._print(f"『发现 {item_name} x{count}』")
+                found_any = True
+
+        if not found_any:
+            self._print("没有发现什么有价值的东西。")
+        else:
+            self.state.set('inventory', inventory.to_dict())
+
+    def cmd_rest(self, args: list) -> None:
+        """休息恢复"""
+        if self.in_combat:
+            self._print("\n战斗中无法休息！")
+            return
+
+        world_state = self.state.get('world', {})
+        current_scene = world_state.get('current_scene', {})
+
+        # 检查是否是安全区域
+        if not current_scene.get('can_rest', False) and current_scene.get('danger_level') != 'safe':
+            self._print("\n这里不够安全，无法休息。")
+            self._print("提示：返回新手村的客栈可以安全休息。")
+            return
+
+        # 恢复生命和法力
+        derived = self.character.data['derived_attributes']
+        hp_before = derived['hp']
+        mp_before = derived['mp']
+
+        derived['hp'] = derived['hp_max']
+        derived['mp'] = derived['mp_max']
+
+        hp_healed = derived['hp'] - hp_before
+        mp_healed = derived['mp'] - mp_before
+
+        self._print("\n你找了个安全的地方休息...")
+        self._print(f"『恢复了 {hp_healed} 点生命，{mp_healed} 点法力』")
+        self._print(f"当前状态：HP {derived['hp']}/{derived['hp_max']} | MP {derived['mp']}/{derived['mp_max']}")
+
+        self.state.set('character', self.character.to_dict())
+
+    def cmd_shop(self, args: list) -> None:
+        """查看商店"""
+        world_state = self.state.get('world', {})
+        current_scene = world_state.get('current_scene', {})
+        scene_name = current_scene.get('name', '')
+
+        # 检查当前场景是否有商店
+        if scene_name != '新手村':
+            self._print("\n这里没有商店。")
+            return
+
+        self._print("\n【杂货铺 - 李掌柜】")
+        self._print("「客官，看看有什么需要的？」\n")
+
+        shop_items = self._get_shop_items()
+        for i, item in enumerate(shop_items, 1):
+            self._print(f"  {i}. {item['name']} - {item['price']} 金币")
+            self._print(f"     {item.get('description', '')}")
+
+        self._print(f"\n你的金币：{self.character.data['currency'].get('gold', 0)}")
+        self._print("使用 buy <物品名> 购买，sell <物品名> 出售")
+
+    def _get_shop_items(self) -> list:
+        """获取商店物品列表"""
+        return [
+            {
+                'id': 'healing_pill_low',
+                'name': '下品回血丹',
+                'price': 20,
+                'description': '恢复50点生命',
+                'stackable': True,
+                'consumable': True,
+                'quality': 'common',
+                'effects': {'heal_hp': 50}
+            },
+            {
+                'id': 'healing_pill_mid',
+                'name': '中品回血丹',
+                'price': 80,
+                'description': '恢复150点生命',
+                'stackable': True,
+                'consumable': True,
+                'quality': 'uncommon',
+                'effects': {'heal_hp': 150}
+            },
+            {
+                'id': 'mana_pill_low',
+                'name': '下品回蓝丹',
+                'price': 15,
+                'description': '恢复30点法力',
+                'stackable': True,
+                'consumable': True,
+                'quality': 'common',
+                'effects': {'heal_mp': 30}
+            },
+            {
+                'id': 'mana_pill_mid',
+                'name': '中品回蓝丹',
+                'price': 60,
+                'description': '恢复100点法力',
+                'stackable': True,
+                'consumable': True,
+                'quality': 'uncommon',
+                'effects': {'heal_mp': 100}
+            },
+            {
+                'id': 'antidote',
+                'name': '解毒丹',
+                'price': 30,
+                'description': '解除中毒状态',
+                'stackable': True,
+                'consumable': True,
+                'quality': 'common',
+                'effects': {'cure': 'poison'}
+            }
+        ]
+
+    def cmd_buy(self, args: list) -> None:
+        """购买物品"""
+        if not args:
+            self._print("\n请指定要购买的物品。用法: buy <物品名> [数量]")
+            return
+
+        # 检查是否在商店
+        world_state = self.state.get('world', {})
+        current_scene = world_state.get('current_scene', {})
+        if current_scene.get('name') != '新手村':
+            self._print("\n这里没有商店。")
+            return
+
+        item_name = args[0]
+        count = int(args[1]) if len(args) > 1 else 1
+
+        # 查找物品
+        shop_items = self._get_shop_items()
+        target_item = None
+        for item in shop_items:
+            if item['name'] == item_name:
+                target_item = item
+                break
+
+        if not target_item:
+            self._print(f"\n商店没有 {item_name}。")
+            return
+
+        total_price = target_item['price'] * count
+        gold = self.character.data['currency'].get('gold', 0)
+
+        if gold < total_price:
+            self._print(f"\n金币不足！需要 {total_price}，你只有 {gold}。")
+            return
+
+        # 扣除金币
+        self.character.data['currency']['gold'] = gold - total_price
+
+        # 添加物品
+        inv_data = self.state.get('inventory', {})
+        inventory = Inventory(inv_data)
+
+        buy_item = target_item.copy()
+        buy_item['count'] = count
+        inventory.add_item(buy_item)
+
+        self.state.set('inventory', inventory.to_dict())
+        self.state.set('character', self.character.to_dict())
+
+        self._print(f"\n『购买了 {item_name} x{count}，花费 {total_price} 金币』")
+        self._print(f"剩余金币：{self.character.data['currency']['gold']}")
+
+    def cmd_sell(self, args: list) -> None:
+        """出售物品"""
+        if not args:
+            self._print("\n请指定要出售的物品。用法: sell <物品名> [数量]")
+            return
+
+        # 检查是否在商店
+        world_state = self.state.get('world', {})
+        current_scene = world_state.get('current_scene', {})
+        if current_scene.get('name') != '新手村':
+            self._print("\n这里没有商店。")
+            return
+
+        item_name = args[0]
+        count = int(args[1]) if len(args) > 1 else 1
+
+        # 查找背包物品
+        inv_data = self.state.get('inventory', {})
+        inventory = Inventory(inv_data)
+
+        target_item = None
+        for item in inventory.data.get('items', []):
+            if item['name'] == item_name:
+                target_item = item
+                break
+
+        if not target_item:
+            self._print(f"\n你没有 {item_name}。")
+            return
+
+        if target_item.get('count', 1) < count:
+            self._print(f"\n你只有 {target_item.get('count', 1)} 个 {item_name}。")
+            return
+
+        # 计算售价（默认为购买价的一半，或者物品自带的sell_price）
+        sell_price = target_item.get('sell_price', target_item.get('price', 10) // 2)
+        total_price = sell_price * count
+
+        # 移除物品
+        if target_item.get('count', 1) == count:
+            inventory.data['items'].remove(target_item)
+        else:
+            target_item['count'] -= count
+
+        # 增加金币
+        self.character.data['currency']['gold'] = self.character.data['currency'].get('gold', 0) + total_price
+
+        self.state.set('inventory', inventory.to_dict())
+        self.state.set('character', self.character.to_dict())
+
+        self._print(f"\n『出售了 {item_name} x{count}，获得 {total_price} 金币』")
+        self._print(f"当前金币：{self.character.data['currency']['gold']}")
+
+    def cmd_quest(self, args: list) -> None:
+        """查看任务"""
+        quests_data = self.state.get('quests', {'quests': []})
+        active_quests = [q for q in quests_data.get('quests', []) if q.get('status') == 'active']
+        completed_quests = [q for q in quests_data.get('quests', []) if q.get('status') == 'completed']
+
+        if not args:
+            # 显示任务列表
+            self._print("\n【任务列表】")
+
+            if active_quests:
+                self._print("\n进行中：")
+                for quest in active_quests:
+                    self._print(f"  - {quest['name']}")
+            else:
+                self._print("\n暂无进行中的任务。")
+
+            if completed_quests:
+                self._print(f"\n已完成：{len(completed_quests)} 个")
+
+            self._print("\n使用 quest <任务名> 查看详情")
+            return
+
+        # 查看具体任务
+        quest_name = " ".join(args)
+        target_quest = None
+        for q in quests_data.get('quests', []):
+            if q['name'] == quest_name:
+                target_quest = q
+                break
+
+        if not target_quest:
+            self._print(f"\n没有找到任务：{quest_name}")
+            return
+
+        self._print(f"\n【{target_quest['name']}】")
+        self._print(f"状态：{target_quest.get('status', 'unknown')}")
+        self._print(f"\n{target_quest.get('description', '无描述')}")
+
+        if target_quest.get('objectives'):
+            self._print("\n目标：")
+            progress = target_quest.get('progress', {})
+            for obj in target_quest['objectives']:
+                current = progress.get(obj['id'], 0)
+                required = obj.get('required', 1)
+                status = "✓" if current >= required else f"{current}/{required}"
+                self._print(f"  - {obj.get('description', '未知')}: {status}")
+
+        if target_quest.get('rewards'):
+            self._print("\n奖励：")
+            rewards = target_quest['rewards']
+            if rewards.get('exp'):
+                self._print(f"  - 经验: {rewards['exp']}")
+            if rewards.get('gold'):
+                self._print(f"  - 金币: {rewards['gold']}")
+            if rewards.get('items'):
+                for item in rewards['items']:
+                    self._print(f"  - {item['name']} x{item.get('count', 1)}")
+
     def cmd_addpoint(self, args: list) -> None:
         """分配属性点"""
         available = self.character.data.get('attribute_points', 0)
@@ -669,13 +1169,25 @@ class Game:
   move <地点>     - 移动到其他地点
 
 【战斗命令】
-  attack (a) <目标>     - 普通攻击
+  attack (a) [目标]     - 普通攻击（不指定则攻击第一个敌人）
   skill (k) <技能> [目标] - 使用技能
+  defend (d)            - 防御姿态（受伤减半）
   flee (f)              - 尝试逃跑
+
+【探索命令】
+  search          - 搜索区域（主动寻找怪物）
+  examine (e) <对象>    - 检查场景中的物品
+  rest (r)        - 休息恢复（仅限安全区）
+
+【交易命令】
+  shop            - 查看商店
+  buy <物品> [数量]     - 购买物品
+  sell <物品> [数量]    - 出售物品
 
 【互动命令】
   talk (t) <NPC> <话>   - 与NPC对话
   use (u) <物品>        - 使用物品
+  quest           - 查看任务列表
 
 【修炼命令】
   cultivate (c)   - 打坐修炼（获取经验）
@@ -689,8 +1201,6 @@ class Game:
 
 【自由行动】
   直接输入任何行动描述，AI会帮你叙述结果。
-  例如："四处查看有没有可疑的东西"
-        "向老者打听此地的历史"
 """)
 
     def cmd_save(self, args: list) -> None:
@@ -797,7 +1307,7 @@ class Game:
         # 更新状态
         self._update_combat_state()
 
-    def _enemy_turn(self, enemy: dict) -> None:
+    def _enemy_turn(self, enemy: dict, player_defending: bool = False) -> None:
         """敌人回合"""
         if not enemy.get('is_alive', True):
             return
@@ -810,12 +1320,18 @@ class Game:
             defender_element=self.character.data.get('element')
         )
 
-        apply_result = self.rules.apply_damage(self.character.data, damage_result.final_damage)
+        # 如果玩家在防御，伤害减半
+        actual_damage = damage_result.final_damage
+        if player_defending:
+            actual_damage = actual_damage // 2
 
+        apply_result = self.rules.apply_damage(self.character.data, actual_damage)
+
+        defend_text = "（被格挡）" if player_defending else ""
         combat_log = [{
             "actor": enemy['name'],
             "action": "反击",
-            "result": f"造成{damage_result.final_damage}伤害" +
+            "result": f"造成{actual_damage}伤害{defend_text}" +
                      ("（暴击）" if damage_result.is_crit else "") +
                      ("（闪避）" if damage_result.is_dodged else "")
         }]
@@ -991,8 +1507,31 @@ class Game:
         }
         self.state.set('npcs', initial_npcs)
 
+        # 初始化任务（自动接取新手任务）
+        initial_quests = {"quests": []}
+        for quest in self.quests_config.get('starter_quests', []):
+            if quest.get('auto_accept'):
+                quest_data = {
+                    'id': quest['id'],
+                    'name': quest['name'],
+                    'type': quest.get('type', 'main'),
+                    'description': quest['description'],
+                    'objectives': quest.get('objectives', []),
+                    'rewards': quest.get('rewards', {}),
+                    'status': 'active',
+                    'progress': {}
+                }
+                initial_quests['quests'].append(quest_data)
+        self.state.set('quests', initial_quests)
+
         self.state.save_all()
         self._print(f"\n角色 {name} 创建成功！")
+
+        # 显示新手提示
+        self._print("\n『新手提示』")
+        self._print("  - 输入 help 查看所有命令")
+        self._print("  - 输入 quest 查看当前任务")
+        self._print("  - 去找村长王老交谈吧！")
 
     def _generate_default_scene(self) -> dict:
         """生成默认场景"""
@@ -1007,65 +1546,43 @@ class Game:
         }
 
     def _get_or_create_scene(self, scene_name: str) -> dict:
-        """获取或创建场景"""
-        # 这里可以扩展为从配置加载或AI生成
-        scenes = {
-            "新手村": {
-                "name": "新手村",
-                "type": "settlement",
-                "description": "一个宁静的小村庄，炊烟袅袅，鸡犬相闻。村子虽小，却五脏俱全。",
-                "features": ["客栈", "杂货铺", "村长家", "练武场"],
-                "exits": ["村外小路", "后山"],
-                "atmosphere": "宁静祥和",
-                "danger_level": "安全"
-            },
-            "村外小路": {
-                "name": "村外小路",
-                "type": "road",
-                "description": "一条蜿蜒的土路，两旁长满野草。偶尔能看到野兔从草丛中窜过。",
-                "features": ["路边野花", "远处的树林", "倒塌的石碑"],
-                "exits": ["新手村", "荒野"],
-                "atmosphere": "平静中带着一丝不安",
-                "danger_level": "低"
-            },
-            "后山": {
-                "name": "后山",
-                "type": "wilderness",
-                "description": "村子后面的小山，树木葱郁，山间灵气比村中浓郁几分。据村民说，山中有野兽出没。",
-                "features": ["山洞入口", "灵草", "奇怪的脚印", "古老的石阶"],
-                "exits": ["新手村", "山洞"],
-                "atmosphere": "神秘幽深",
-                "danger_level": "中"
-            },
-            "山洞": {
-                "name": "山洞",
-                "type": "dungeon",
-                "description": "一个幽深的山洞，洞口笼罩着淡淡的雾气。洞内传来阵阵凉意和低沉的咆哮声。",
-                "features": ["石钟乳", "地下水潭", "兽骨堆", "幽暗的深处"],
-                "exits": ["后山"],
-                "atmosphere": "阴森恐怖",
-                "danger_level": "高"
-            },
-            "荒野": {
-                "name": "荒野",
-                "type": "wilderness",
-                "description": "一望无际的荒野，杂草丛生，荆棘遍地。远处似乎有狼嚎声传来。",
-                "features": ["废弃的营地", "狼群痕迹", "远处的山脉"],
-                "exits": ["村外小路"],
-                "atmosphere": "荒凉危险",
-                "danger_level": "中"
-            }
-        }
+        """从配置获取场景数据"""
+        # 先按名称查找
+        scene_config = self.scenes_by_name.get(scene_name)
+        if not scene_config:
+            # 再按ID查找
+            scene_config = self.scenes_by_id.get(scene_name)
 
-        return scenes.get(scene_name, {
+        if scene_config:
+            # 转换为游戏使用的格式
+            features = [f['name'] for f in scene_config.get('features', [])]
+            exits = [e['name'] for e in scene_config.get('exits', [])]
+
+            return {
+                "id": scene_config['id'],
+                "name": scene_config['name'],
+                "type": scene_config['type'],
+                "description": scene_config['description'],
+                "features": features,
+                "features_detail": scene_config.get('features', []),
+                "exits": exits,
+                "exits_detail": scene_config.get('exits', []),
+                "atmosphere": scene_config.get('atmosphere', '普通'),
+                "danger_level": scene_config.get('danger_level', 'low'),
+                "can_rest": scene_config.get('can_rest', False),
+                "can_save": scene_config.get('can_save', False)
+            }
+
+        # 未知场景
+        return {
             "name": scene_name,
             "type": "unknown",
             "description": f"你来到了{scene_name}，这是一片未知的区域。",
             "features": [],
-            "exits": ["新手村"],  # 默认可以返回新手村
+            "exits": ["新手村"],
             "atmosphere": "未知",
-            "danger_level": "未知"
-        })
+            "danger_level": "unknown"
+        }
 
     def _get_quality_name(self, quality: str) -> str:
         """获取品质中文名"""
