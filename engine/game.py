@@ -358,6 +358,10 @@ class Game:
         story_log.add_entry(f"{npc_name}：「{response}」", "dialogue")
         self.state.set('story_log', story_log.to_dict())
 
+        # 更新任务进度（对话类）
+        npc_id = npc.get('id', '')
+        self._update_quest_progress('talk', npc_id)
+
     def cmd_attack(self, args: list) -> None:
         """攻击目标"""
         if not args:
@@ -705,6 +709,7 @@ class Game:
         inv_data = self.state.get('inventory', {})
         inventory = Inventory(inv_data)
         gathered_any = False
+        gathered_items = []
 
         for item_info in gather_items:
             if random.random() < item_info.get('chance', 0.5):
@@ -718,11 +723,15 @@ class Game:
                 inventory.add_item(item)
                 self._print(f"『获得 {item['name']} x1』")
                 gathered_any = True
+                gathered_items.append(item_info['id'])
 
         if not gathered_any:
             self._print("没有采集到什么有用的东西。")
         else:
             self.state.set('inventory', inventory.to_dict())
+            # 更新任务进度（采集类）
+            for item_id in gathered_items:
+                self._update_quest_progress('gather', item_id)
 
     def _handle_search_feature(self, feature: dict) -> None:
         """处理搜索特征点"""
@@ -1131,6 +1140,9 @@ class Game:
         self.character.data['status']['is_cultivating'] = False
         self.state.set('character', self.character.to_dict())
 
+        # 更新任务进度（修炼类）
+        self._update_quest_progress('cultivate', '')
+
     def cmd_breakthrough(self, args: list) -> None:
         """尝试突破境界"""
         can_break, msg = self.rules.can_breakthrough(self.character.data)
@@ -1153,6 +1165,9 @@ class Game:
             self._print(f"\n{narrative}")
             self._print(f"\n『{result['message']}』")
             self._print(f"『获得 {result['attribute_points_gained']} 点属性点』")
+
+            # 更新任务进度（突破类）
+            self._update_quest_progress('breakthrough', '')
         else:
             self._print(f"\n{result['message']}")
 
@@ -1383,6 +1398,196 @@ class Game:
         # 更新统计
         self.character.data['statistics']['monsters_killed'] += 1
 
+        # 更新任务进度（击杀类）
+        enemy_id = enemy.get('id', '')
+        self._update_quest_progress('kill', enemy_id)
+        self._update_quest_progress('kill', 'any')  # 击杀任意怪物
+
+    def _update_quest_progress(self, objective_type: str, target: str, amount: int = 1) -> None:
+        """更新任务进度"""
+        quests_data = self.state.get('quests', {'quests': []})
+        updated = False
+
+        for quest in quests_data.get('quests', []):
+            if quest.get('status') != 'active':
+                continue
+
+            for objective in quest.get('objectives', []):
+                if objective.get('type') != objective_type:
+                    continue
+
+                # 检查目标是否匹配
+                obj_target = objective.get('target', '')
+                if obj_target and obj_target != target and target != 'any':
+                    continue
+
+                # 更新进度
+                obj_id = objective['id']
+                current = quest.get('progress', {}).get(obj_id, 0)
+                required = objective.get('required', 1)
+
+                if current < required:
+                    if 'progress' not in quest:
+                        quest['progress'] = {}
+                    quest['progress'][obj_id] = current + amount
+                    updated = True
+
+                    new_progress = quest['progress'][obj_id]
+                    obj_desc = objective.get('description', obj_id)
+                    if new_progress >= required:
+                        self._print(f"『任务目标完成：{obj_desc}』")
+                    else:
+                        self._print(f"『任务进度：{obj_desc} ({new_progress}/{required})』")
+
+        if updated:
+            self.state.set('quests', quests_data)
+            # 检查任务是否全部完成
+            self._check_quest_completion()
+
+    def _check_quest_completion(self) -> None:
+        """检查并处理任务完成"""
+        quests_data = self.state.get('quests', {'quests': []})
+        completed_any = False
+
+        for quest in quests_data.get('quests', []):
+            if quest.get('status') != 'active':
+                continue
+
+            # 检查所有目标是否完成
+            all_complete = True
+            for objective in quest.get('objectives', []):
+                obj_id = objective['id']
+                current = quest.get('progress', {}).get(obj_id, 0)
+                required = objective.get('required', 1)
+                if current < required:
+                    all_complete = False
+                    break
+
+            if all_complete:
+                quest['status'] = 'completed'
+                completed_any = True
+                quest_name = quest['name']
+                self._print(f"\n『任务完成：{quest_name}』")
+
+                # 发放奖励
+                rewards = quest.get('rewards', {})
+                self._grant_quest_rewards(rewards)
+
+                # 检查是否有后续任务
+                quest_config = self.quests_by_id.get(quest['id'], {})
+                next_quest_id = quest_config.get('next_quest')
+                if next_quest_id:
+                    self._accept_quest(next_quest_id)
+
+        if completed_any:
+            self.state.set('quests', quests_data)
+
+    def _grant_quest_rewards(self, rewards: dict) -> None:
+        """发放任务奖励"""
+        if not rewards:
+            return
+
+        # 经验奖励
+        if rewards.get('exp'):
+            exp = rewards['exp']
+            self.character.add_exp(exp)
+            self._print(f"『获得 {exp} 点修为』")
+
+        # 金币奖励
+        if rewards.get('gold'):
+            gold = rewards['gold']
+            self.character.data['currency']['gold'] = self.character.data['currency'].get('gold', 0) + gold
+            self._print(f"『获得 {gold} 金币』")
+
+        # 属性点奖励
+        if rewards.get('attribute_points'):
+            points = rewards['attribute_points']
+            self.character.data['attribute_points'] = self.character.data.get('attribute_points', 0) + points
+            self._print(f"『获得 {points} 属性点』")
+
+        # 物品奖励
+        if rewards.get('items'):
+            inv_data = self.state.get('inventory', {})
+            inventory = Inventory(inv_data)
+            for item_info in rewards['items']:
+                item = {
+                    'id': item_info['id'],
+                    'name': item_info['name'],
+                    'count': item_info.get('count', 1),
+                    'stackable': True,
+                    'quality': item_info.get('quality', 'common')
+                }
+                # 如果是技能书，添加技能
+                if item_info.get('type') == 'skill_book' and item_info.get('skill_id'):
+                    self._learn_skill_from_book(item_info['skill_id'])
+                else:
+                    inventory.add_item(item)
+                    item_name = item['name']
+                    item_count = item['count']
+                    self._print(f"『获得 {item_name} x{item_count}』")
+            self.state.set('inventory', inventory.to_dict())
+
+        self.state.set('character', self.character.to_dict())
+
+    def _learn_skill_from_book(self, skill_id: str) -> None:
+        """从技能书学习技能"""
+        # 查找技能配置
+        all_skills = (
+            self.skills_config.get('basic_skills', []) +
+            self.skills_config.get('qi_refining_skills', []) +
+            self.skills_config.get('foundation_skills', []) +
+            self.skills_config.get('passive_skills', []) +
+            self.skills_config.get('ultimate_skills', [])
+        )
+
+        for skill in all_skills:
+            if skill['id'] == skill_id:
+                # 检查是否已学会
+                current_skills = self.character.data.get('skills', [])
+                if any(s['id'] == skill_id for s in current_skills):
+                    skill_name = skill['name']
+                    self._print(f"『你已经学会了 {skill_name}』")
+                    return
+
+                self.character.data['skills'].append(skill.copy())
+                skill_name = skill['name']
+                self._print(f"『学会了新技能：{skill_name}』")
+                return
+
+        self._print(f"『无法学习技能：{skill_id}』")
+
+    def _accept_quest(self, quest_id: str) -> None:
+        """接取任务"""
+        quest_config = self.quests_by_id.get(quest_id)
+        if not quest_config:
+            return
+
+        quests_data = self.state.get('quests', {'quests': []})
+
+        # 检查是否已接取
+        for q in quests_data.get('quests', []):
+            if q['id'] == quest_id:
+                return
+
+        # 添加任务
+        quest_data = {
+            'id': quest_config['id'],
+            'name': quest_config['name'],
+            'type': quest_config.get('type', 'main'),
+            'description': quest_config['description'],
+            'objectives': quest_config.get('objectives', []),
+            'rewards': quest_config.get('rewards', {}),
+            'status': 'active',
+            'progress': {}
+        }
+        quests_data['quests'].append(quest_data)
+        self.state.set('quests', quests_data)
+
+        quest_name = quest_config['name']
+        quest_desc = quest_config['description']
+        self._print(f"\n『接取新任务：{quest_name}』")
+        self._print(f"  {quest_desc}")
+
     def _handle_player_death(self) -> None:
         """处理玩家死亡"""
         self._print("\n『你被击败了...』")
@@ -1390,13 +1595,50 @@ class Game:
         # 更新统计
         self.character.data['statistics']['deaths'] += 1
 
-        # 复活（简单处理：回到满血，回到安全地点）
-        self.character.data['derived_attributes']['hp'] = self.character.data['derived_attributes']['hp_max']
+        # 死亡惩罚
+        # 1. 损失一定比例的经验（10%，但不会掉级）
+        current_exp = self.character.data.get('exp', 0)
+        exp_lost = int(current_exp * 0.1)
+        if exp_lost > 0:
+            self.character.data['exp'] = max(0, current_exp - exp_lost)
+            self._print(f"『损失了 {exp_lost} 点修为』")
+
+        # 2. 损失一定比例的金币（20%）
+        current_gold = self.character.data['currency'].get('gold', 0)
+        gold_lost = int(current_gold * 0.2)
+        if gold_lost > 0:
+            self.character.data['currency']['gold'] = current_gold - gold_lost
+            self._print(f"『丢失了 {gold_lost} 枚金币』")
+
+        # 3. 有概率掉落背包中的物品（30%概率丢失一件随机物品）
+        inv_data = self.state.get('inventory', {})
+        items = inv_data.get('items', [])
+        if items and random.random() < 0.3:
+            lost_item = random.choice(items)
+            lost_name = lost_item['name']
+            lost_count = min(lost_item.get('count', 1), 1)  # 只丢1个
+            if lost_item.get('count', 1) > 1:
+                lost_item['count'] -= 1
+            else:
+                items.remove(lost_item)
+            self.state.set('inventory', inv_data)
+            self._print(f"『丢失了 {lost_name} x{lost_count}』")
+
+        # 复活：回到满血（但只恢复50%），回到安全地点
+        max_hp = self.character.data['derived_attributes']['hp_max']
+        self.character.data['derived_attributes']['hp'] = max_hp // 2
+        self.character.data['derived_attributes']['mp'] = self.character.data['derived_attributes']['mp_max'] // 2
         self.character.data['status']['is_alive'] = True
         self.character.data['status']['current_scene'] = "新手村"
 
+        # 更新场景
+        world_state = self.state.get('world', {})
+        world_state['current_scene'] = self._get_or_create_scene("新手村")
+        self.state.set('world', world_state)
+
         self._end_combat(victory=False)
-        self._print("\n你在新手村的客栈中醒来...")
+        self._print("\n你在新手村的客栈中悠悠醒来，浑身酸痛，口袋也轻了许多...")
+        self._print(f"当前状态：HP {self.character.data['derived_attributes']['hp']}/{max_hp}")
 
     def _end_combat(self, victory: bool) -> None:
         """结束战斗"""
