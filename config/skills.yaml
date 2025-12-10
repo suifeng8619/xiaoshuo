@@ -1,0 +1,218 @@
+# 技能配置
+
+# ==================== 基础技能（所有人都能学） ====================
+basic_skills:
+  - id: basic_punch
+    name: 基础拳法
+    description: 凡人武学，简单直接
+    type: active
+    damage_multiplier: 1.2
+    mp_cost: 0
+    cooldown: 0
+    required_realm: mortal
+    element: null
+
+  - id: basic_sword
+    name: 基础剑法
+    description: 入门剑术，中规中矩
+    type: active
+    damage_multiplier: 1.3
+    mp_cost: 5
+    cooldown: 0
+    required_realm: mortal
+    element: metal
+
+  - id: meditation
+    name: 打坐冥想
+    description: 恢复少量法力
+    type: active
+    heal_mp: 20
+    mp_cost: 0
+    cooldown: 3
+    required_realm: mortal
+
+# ==================== 炼气期技能 ====================
+qi_refining_skills:
+  - id: qi_blade
+    name: 气刃术
+    description: 凝聚灵气于掌，化作锋利气刃
+    type: active
+    damage_multiplier: 1.8
+    damage_type: magical
+    mp_cost: 15
+    cooldown: 1
+    required_realm: qi_refining
+    element: null
+
+  - id: qi_shield
+    name: 灵气护盾
+    description: 凝聚灵气形成护盾，吸收伤害
+    type: active
+    mp_cost: 20
+    cooldown: 5
+    required_realm: qi_refining
+    apply_buff:
+      id: qi_shield
+      name: 灵气护盾
+      type: shield
+      duration: 3
+      absorb: 50
+
+  - id: wind_step
+    name: 风行步
+    description: 脚踏罡风，身法大增
+    type: active
+    mp_cost: 10
+    cooldown: 4
+    required_realm: qi_refining
+    apply_buff:
+      id: wind_step
+      name: 风行步
+      type: stat_boost
+      duration: 3
+      effects:
+        speed: 50
+        dodge_rate: 0.1
+
+  - id: flame_palm
+    name: 焚天掌
+    description: 掌心燃起真火，灼烧敌人
+    type: active
+    damage_multiplier: 2.0
+    damage_type: magical
+    mp_cost: 25
+    cooldown: 2
+    required_realm: qi_refining
+    element: fire
+    apply_debuff:
+      id: burning
+      name: 灼烧
+      type: dot
+      duration: 3
+      damage_per_tick: 10
+
+  - id: frost_arrow
+    name: 寒冰箭
+    description: 凝聚寒气成箭，冰冻敌人
+    type: active
+    damage_multiplier: 1.6
+    damage_type: magical
+    mp_cost: 20
+    cooldown: 2
+    required_realm: qi_refining
+    element: water
+    apply_debuff:
+      id: frozen
+      name: 冰冻
+      type: stat_debuff
+      duration: 2
+      effects:
+        speed: -30
+
+# ==================== 筑基期技能 ====================
+foundation_skills:
+  - id: sword_qi
+    name: 剑气纵横
+    description: 真气化剑，可攻击远处敌人
+    type: active
+    damage_multiplier: 2.5
+    damage_type: magical
+    mp_cost: 40
+    cooldown: 2
+    required_realm: foundation
+    element: metal
+
+  - id: earth_armor
+    name: 厚土甲
+    description: 大地之力护身，大幅提升防御
+    type: active
+    mp_cost: 35
+    cooldown: 6
+    required_realm: foundation
+    element: earth
+    apply_buff:
+      id: earth_armor
+      name: 厚土甲
+      type: stat_boost
+      duration: 5
+      effects:
+        defense: 100
+
+  - id: thunder_palm
+    name: 雷霆掌
+    description: 掌心凝聚雷电，造成巨额伤害
+    type: active
+    damage_multiplier: 3.0
+    damage_type: magical
+    mp_cost: 50
+    cooldown: 3
+    required_realm: foundation
+    element: metal
+
+  - id: life_drain
+    name: 吸血大法
+    description: 吸取敌人生命力
+    type: active
+    damage_multiplier: 1.5
+    damage_type: magical
+    mp_cost: 30
+    cooldown: 4
+    required_realm: foundation
+    lifesteal: 0.5  # 造成伤害的50%转化为生命
+
+# ==================== 被动技能 ====================
+passive_skills:
+  - id: iron_body
+    name: 铁布衫
+    description: 身体坚硬如铁，减少受到的伤害
+    type: passive
+    required_realm: qi_refining
+    effects:
+      damage_reduction: 0.1  # 减少10%受到的伤害
+
+  - id: keen_sense
+    name: 敏锐直觉
+    description: 感知危险，提高闪避
+    type: passive
+    required_realm: mortal
+    effects:
+      dodge_rate: 0.05
+
+  - id: cultivation_talent
+    name: 修炼天赋
+    description: 修炼速度提升
+    type: passive
+    required_realm: mortal
+    effects:
+      exp_bonus: 0.2  # 20%额外经验
+
+# ==================== 神通（大招） ====================
+ultimate_skills:
+  - id: sword_rain
+    name: 万剑归宗
+    description: 召唤千百道剑气，覆盖整个战场
+    type: ultimate
+    damage_multiplier: 5.0
+    damage_type: magical
+    mp_cost: 150
+    cooldown: 10
+    required_realm: golden_core
+    element: metal
+    aoe: true
+
+  - id: phoenix_rebirth
+    name: 凤凰涅槃
+    description: 濒死时自动复活，恢复全部生命
+    type: ultimate
+    mp_cost: 200
+    cooldown: 20
+    required_realm: nascent_soul
+    element: fire
+    auto_trigger: true
+    trigger_condition: hp_below_10_percent
+    heal_percent: 1.0
+
+# ==================== 初始技能包 ====================
+starter_skills:
+  - basic_punch
+  - keen_sense
