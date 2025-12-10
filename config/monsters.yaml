@@ -33,6 +33,17 @@ starter_monsters:
         chance: 0.4
         min_count: 1
         max_count: 1
+      - item:
+          id: gold_coins
+          name: 金币
+          quality: common
+          stackable: true
+          effects:
+            gold: 5
+          sell_price: 5
+        chance: 0.3
+        min_count: 1
+        max_count: 3
 
   - id: wild_boar
     name: 野猪
@@ -50,16 +61,21 @@ starter_monsters:
           name: 野猪獠牙
           quality: common
           stackable: true
+          description: 野猪的獠牙，可以出售
           sell_price: 8
         chance: 0.7
+        min_count: 1
+        max_count: 1
       - item:
           id: boar_meat
           name: 野猪肉
           quality: common
           stackable: true
           consumable: true
+          description: 新鲜的野猪肉，可以恢复体力
           effects:
             heal_hp: 30
+          sell_price: 5
         chance: 0.9
         min_count: 1
         max_count: 3
@@ -80,17 +96,35 @@ starter_monsters:
           name: 金币袋
           quality: common
           stackable: true
+          description: 一袋铜钱
           effects:
             gold: 20
+          sell_price: 20
         chance: 0.6
+        min_count: 1
+        max_count: 1
       - item:
           id: rusty_sword
           name: 锈剑
           quality: common
           type: weapon
+          description: 生锈的铁剑，勉强能用
           stats:
             attack: 5
+          sell_price: 15
         chance: 0.2
+        min_count: 1
+        max_count: 1
+      - item:
+          id: bandit_cloth
+          name: 破旧布片
+          quality: common
+          stackable: true
+          description: 山贼的破衣服碎片
+          sell_price: 2
+        chance: 0.8
+        min_count: 1
+        max_count: 2
 
 # ==================== 后山怪物 ====================
 backhill_monsters:
@@ -111,16 +145,31 @@ backhill_monsters:
           name: 灵狼内丹
           quality: uncommon
           stackable: true
-          description: 蕴含微弱灵气
+          description: 蕴含微弱灵气，可用于炼丹
           sell_price: 50
         chance: 0.3
+        min_count: 1
+        max_count: 1
       - item:
           id: spirit_wolf_fang
           name: 灵狼牙
           quality: uncommon
           stackable: true
+          description: 灵狼的尖牙，比普通狼牙更加坚硬
           sell_price: 20
         chance: 0.6
+        min_count: 1
+        max_count: 2
+      - item:
+          id: spirit_wolf_pelt
+          name: 灵狼皮
+          quality: uncommon
+          stackable: true
+          description: 泛着幽光的狼皮，可制作灵器
+          sell_price: 35
+        chance: 0.4
+        min_count: 1
+        max_count: 1
 
   - id: cave_bear
     name: 穴熊
@@ -140,16 +189,33 @@ backhill_monsters:
           quality: uncommon
           stackable: true
           consumable: true
+          description: 穴熊的胆囊，有强效恢复作用
           effects:
             heal_hp: 100
+          sell_price: 60
         chance: 0.4
+        min_count: 1
+        max_count: 1
       - item:
           id: bear_paw
           name: 熊掌
           quality: uncommon
           stackable: true
+          description: 珍贵的熊掌，可以炖汤
           sell_price: 80
         chance: 0.5
+        min_count: 1
+        max_count: 2
+      - item:
+          id: bear_fur
+          name: 熊皮
+          quality: uncommon
+          stackable: true
+          description: 厚实的熊皮，可制作防具
+          sell_price: 100
+        chance: 0.3
+        min_count: 1
+        max_count: 1
 
   - id: mountain_spirit
     name: 山魈
@@ -168,19 +234,33 @@ backhill_monsters:
           name: 精怪之精
           quality: rare
           stackable: true
-          description: 可用于炼丹
+          description: 山魈的精华，可用于炼丹
           sell_price: 200
         chance: 0.2
+        min_count: 1
+        max_count: 1
       - item:
           id: spirit_stone_fragment
           name: 灵石碎片
           quality: uncommon
           stackable: true
+          description: 碎裂的灵石，仍有微弱灵力
           effects:
             spirit_stones: 1
+          sell_price: 30
         chance: 0.5
         min_count: 1
         max_count: 3
+      - item:
+          id: spirit_bone
+          name: 妖骨
+          quality: uncommon
+          stackable: true
+          description: 山魈的骨头，可制作法器
+          sell_price: 45
+        chance: 0.6
+        min_count: 1
+        max_count: 2
 
 # ==================== 荒野怪物 ====================
 wilderness_monsters:
@@ -204,13 +284,28 @@ wilderness_monsters:
           description: 锋利异常，可打造武器
           sell_price: 150
         chance: 0.5
+        min_count: 1
+        max_count: 1
       - item:
           id: wolf_king_pelt
           name: 狼王皮
           quality: rare
           stackable: false
+          description: 银灰色的狼王皮毛，极为珍贵
           sell_price: 200
         chance: 0.3
+        min_count: 1
+        max_count: 1
+      - item:
+          id: wolf_king_core
+          name: 狼王内丹
+          quality: rare
+          stackable: false
+          description: 狼王修炼而成的内丹，灵气充沛
+          sell_price: 300
+        chance: 0.2
+        min_count: 1
+        max_count: 1
 
 # ==================== 场景怪物分布 ====================
 spawn_locations:
