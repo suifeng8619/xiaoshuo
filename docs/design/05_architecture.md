@@ -430,9 +430,21 @@ class EventManager:
     """
     事件管理器
     管理事件池、触发、调度
+
+    依赖注入:
+    - world_manager: 世界管理器（时间、地点）
+    - character_manager: 角色管理器（NPC状态、关系）
+    - story_manager: 故事管理器（标记、剧情进度）
     """
 
-    def __init__(self):
+    def __init__(self, world_manager: 'WorldManager',
+                 character_manager: 'CharacterManager',
+                 story_manager: 'StoryManager'):
+        # 依赖注入
+        self.world = world_manager
+        self.characters = character_manager
+        self.story = story_manager
+
         # 事件池（按层级）
         self.daily_pool: List[Event] = []
         self.opportunity_pool: List[Event] = []
@@ -442,6 +454,9 @@ class EventManager:
         self.active_events: List[Event] = []
         self.pending_events: List[Event] = []
         self.cooldowns: Dict[str, GameTime] = {}
+
+        # 互斥组占用
+        self.active_mutex_groups: Set[str] = set()
 
         # 配额
         self.daily_limit = 3
@@ -533,6 +548,71 @@ class EventManager:
         score += random.random() * 0.1
 
         return score
+
+    def _conflicts_with(self, event: Event, selected: List[Event]) -> bool:
+        """检查事件是否与已选事件冲突"""
+        # 1. 检查互斥组
+        for group in getattr(event, 'mutex_groups', []):
+            if group in self.active_mutex_groups:
+                return True
+            for sel_event in selected:
+                if group in getattr(sel_event, 'mutex_groups', []):
+                    return True
+
+        # 2. 检查显式互斥
+        for sel_event in selected:
+            if event.id in getattr(sel_event, 'exclusive_with', []):
+                return True
+            if sel_event.id in getattr(event, 'exclusive_with', []):
+                return True
+
+        return False
+
+    def _calculate_urgency(self, event: Event) -> float:
+        """计算紧急度：越接近过期越紧急"""
+        expiry = getattr(event, 'expiry', None)
+        if not expiry or not expiry.deadline:
+            return 0.5  # 无截止时间，中等紧急
+
+        current = self.world.time_system.current_time
+        deadline = expiry.deadline
+
+        # 计算剩余时间比例
+        available_from = getattr(event, 'available_from', current)
+        total_window = (deadline - available_from).total_days()
+        remaining = (deadline - current).total_days()
+
+        if remaining <= 0:
+            return 1.0  # 已过期，最高紧急
+        if total_window <= 0:
+            return 0.5
+
+        # 剩余时间越少，紧急度越高
+        urgency = 1.0 - (remaining / total_window)
+        return min(1.0, max(0.0, urgency))
+
+    def _calculate_relevance(self, event: Event) -> float:
+        """计算与当前情境的相关性"""
+        relevance = 0.0
+        player_location = self.world.player_location
+
+        # 地点匹配
+        if hasattr(event, 'locations') and player_location in event.locations:
+            relevance += 0.3
+
+        # 相关NPC在场
+        npcs_here = self.world.get_npcs_at_location(player_location)
+        involved_npcs = getattr(event, 'involved_npcs', [])
+        for npc in npcs_here:
+            if npc.id in involved_npcs:
+                relevance += 0.2
+
+        # 剧情连贯性
+        follows_event = getattr(event, 'follows_event', None)
+        if follows_event and follows_event in self.story.recently_triggered:
+            relevance += 0.3
+
+        return min(1.0, relevance)
 
     def trigger_event(self, event: Event) -> EventResult:
         """触发事件"""
@@ -1136,4 +1216,989 @@ xiaoshuo/
 
 ---
 
-*本文档定义了技术实现的整体架构。核心原则：规则驱动世界运转，AI负责叙事润色，分工明确，不越界。*
+## 八、AI成本控制策略
+
+### 8.1 Token预算系统
+
+```python
+class TokenBudgetManager:
+    """Token预算管理器"""
+
+    def __init__(self):
+        # 每日预算（可配置）
+        self.daily_budget = {
+            "claude_opus": 50000,   # Claude Opus 4.5
+            "gpt5": 100000,         # GPT 5.1
+            "gpt5_thinking": 30000  # GPT 5.1 Thinking（最贵）
+        }
+
+        # 单次调用上限
+        self.per_call_limit = {
+            "claude_opus": 4000,
+            "gpt5": 4000,
+            "gpt5_thinking": 8000  # 思考链可能更长
+        }
+
+        # 当日已使用
+        self.daily_usage = defaultdict(int)
+
+        # 任务类型优先级（预算紧张时降级）
+        self.task_priority = {
+            TaskType.DIALOGUE: 1,      # 最重要
+            TaskType.NARRATIVE: 2,
+            TaskType.MEMORY: 3,
+            TaskType.DESCRIPTION: 4    # 可省略
+        }
+
+    def request_budget(self, provider: str, estimated_tokens: int,
+                       task_type: TaskType) -> BudgetDecision:
+        """请求预算"""
+        remaining = self.daily_budget[provider] - self.daily_usage[provider]
+
+        if estimated_tokens <= remaining:
+            return BudgetDecision(
+                approved=True,
+                provider=provider,
+                max_tokens=min(estimated_tokens, self.per_call_limit[provider])
+            )
+
+        # 预算不足，尝试降级
+        return self._try_fallback(provider, estimated_tokens, task_type)
+
+    def _try_fallback(self, original_provider: str, tokens: int,
+                      task_type: TaskType) -> BudgetDecision:
+        """降级策略"""
+        # 降级顺序：claude_opus → gpt5 → gpt5_thinking → 模板
+        fallback_chain = {
+            "claude_opus": ["gpt5", "template"],
+            "gpt5": ["claude_opus", "template"],
+            "gpt5_thinking": ["gpt5", "claude_opus", "template"]
+        }
+
+        for fallback in fallback_chain.get(original_provider, []):
+            if fallback == "template":
+                return BudgetDecision(
+                    approved=True,
+                    provider="template",
+                    use_template=True
+                )
+
+            remaining = self.daily_budget[fallback] - self.daily_usage[fallback]
+            if tokens <= remaining:
+                return BudgetDecision(
+                    approved=True,
+                    provider=fallback,
+                    degraded_from=original_provider,
+                    max_tokens=min(tokens, self.per_call_limit[fallback])
+                )
+
+        # 所有AI都超预算，使用模板
+        return BudgetDecision(approved=True, provider="template", use_template=True)
+```
+
+### 8.2 智能缓存系统
+
+```python
+class ResponseCache:
+    """AI响应缓存"""
+
+    def __init__(self, max_size: int = 1000, ttl_hours: int = 24):
+        self.cache: OrderedDict = OrderedDict()
+        self.max_size = max_size
+        self.ttl = timedelta(hours=ttl_hours)
+
+    def get_cache_key(self, prompt_type: str, context_hash: str,
+                      npc_id: str = None) -> str:
+        """生成缓存键"""
+        # 对话缓存考虑NPC状态
+        if prompt_type == "dialogue" and npc_id:
+            return f"{prompt_type}:{npc_id}:{context_hash}"
+        return f"{prompt_type}:{context_hash}"
+
+    def get(self, key: str) -> Optional[CachedResponse]:
+        """获取缓存"""
+        if key not in self.cache:
+            return None
+
+        entry = self.cache[key]
+        if datetime.now() - entry.created_at > self.ttl:
+            del self.cache[key]
+            return None
+
+        # LRU: 移到末尾
+        self.cache.move_to_end(key)
+        return entry.response
+
+    def set(self, key: str, response: str, metadata: dict = None):
+        """设置缓存"""
+        if len(self.cache) >= self.max_size:
+            # 移除最老的
+            self.cache.popitem(last=False)
+
+        self.cache[key] = CacheEntry(
+            response=response,
+            created_at=datetime.now(),
+            metadata=metadata
+        )
+
+
+# 可缓存的场景类型
+CACHEABLE_SCENARIOS = {
+    "location_description": {
+        "ttl": 24,  # 小时
+        "vary_by": ["location_id", "time_slot", "weather"]
+    },
+    "generic_greeting": {
+        "ttl": 168,  # 一周
+        "vary_by": ["npc_id", "relationship_state"]
+    },
+    "combat_action": {
+        "ttl": 1,
+        "vary_by": ["action_type", "target_type"]
+    }
+}
+```
+
+### 8.3 上下文压缩
+
+```python
+class ContextCompressor:
+    """上下文压缩器 - 减少token使用"""
+
+    def compress_memories(self, memories: List[Memory], max_tokens: int = 500) -> str:
+        """压缩记忆列表"""
+        if not memories:
+            return "无相关记忆"
+
+        # 按重要性排序
+        sorted_memories = sorted(memories, key=lambda m: m.importance, reverse=True)
+
+        compressed = []
+        token_count = 0
+
+        for memory in sorted_memories:
+            summary = self._summarize_memory(memory)
+            summary_tokens = self._estimate_tokens(summary)
+
+            if token_count + summary_tokens > max_tokens:
+                break
+
+            compressed.append(summary)
+            token_count += summary_tokens
+
+        return "\n".join(compressed)
+
+    def _summarize_memory(self, memory: Memory) -> str:
+        """单条记忆摘要"""
+        time_ago = self._format_time_ago(memory.timestamp)
+        return f"- [{time_ago}] {memory.summary} (情感:{memory.emotional_impact.type})"
+
+    def compress_npc_context(self, full_context: NPCContext) -> NPCContext:
+        """压缩NPC上下文（用于非关键对话）"""
+        return NPCContext(
+            name=full_context.name,
+            current_mood=full_context.current_mood,
+            relationship_state=full_context.relationship_state,
+            # 省略详细记忆和禁忌
+            relevant_memories=full_context.relevant_memories[:2],
+            taboos=full_context.taboos[:3]
+        )
+
+
+class TokenEstimator:
+    """Token估算器"""
+
+    # 粗略估算：1 token ≈ 4个英文字符 ≈ 1.5个中文字符
+    CHARS_PER_TOKEN_EN = 4
+    CHARS_PER_TOKEN_CN = 1.5
+
+    def estimate(self, text: str) -> int:
+        """估算token数量"""
+        cn_chars = len(re.findall(r'[\u4e00-\u9fff]', text))
+        other_chars = len(text) - cn_chars
+
+        cn_tokens = cn_chars / self.CHARS_PER_TOKEN_CN
+        other_tokens = other_chars / self.CHARS_PER_TOKEN_EN
+
+        return int(cn_tokens + other_tokens)
+```
+
+### 8.4 降级模板系统
+
+```python
+class TemplateEngine:
+    """
+    当AI预算耗尽时使用的模板引擎
+    保证游戏能继续运行
+    """
+
+    def __init__(self):
+        self.templates = self._load_templates()
+
+    def generate_dialogue(self, npc_id: str, context: str,
+                          player_says: str) -> str:
+        """模板对话生成"""
+        npc_templates = self.templates["dialogue"].get(npc_id, self.templates["dialogue"]["default"])
+
+        # 根据上下文选择模板
+        if "问候" in player_says or "你好" in player_says:
+            return random.choice(npc_templates["greeting"])
+
+        if "怎么了" in player_says or "发生什么" in player_says:
+            return random.choice(npc_templates["concerned"])
+
+        if "告别" in player_says or "走了" in player_says:
+            return random.choice(npc_templates["farewell"])
+
+        # 默认回复
+        return random.choice(npc_templates["default"])
+
+    def generate_description(self, location_id: str, time_slot: str) -> str:
+        """模板场景描写"""
+        location_templates = self.templates["location"].get(location_id)
+        if not location_templates:
+            return f"你来到了{location_id}。"
+
+        return location_templates.get(time_slot, location_templates["default"])
+
+
+# 模板示例 (data/templates/dialogue.yaml)
+DIALOGUE_TEMPLATES = """
+atan:
+  greeting:
+    - (她抬起头，眼睛亮了亮) "你来了。"
+    - "早啊。" (她放下手中的活计)
+    - (她朝你点点头) "你吃过了吗？"
+
+  farewell:
+    - "路上小心。" (她目送你离去)
+    - (她轻声说) "早点回来。"
+    - "去吧。" (她低下头继续干活，但你感觉她在偷偷看你)
+
+  concerned:
+    - (她皱起眉) "怎么了？"
+    - "发生什么事了？" (她放下手中的东西，认真看着你)
+    - (她走近一步) "你看起来不太对劲。"
+
+  default:
+    - (她想了想) "嗯..."
+    - (她看着你，没有说话)
+    - "是这样啊。" (她若有所思)
+
+default:
+  greeting:
+    - "道友有礼了。"
+    - "见过道友。"
+
+  default:
+    - "原来如此。"
+    - "在下明白了。"
+"""
+```
+
+### 8.5 成本监控与报警
+
+```python
+class CostMonitor:
+    """成本监控"""
+
+    def __init__(self):
+        self.pricing = {
+            # 价格单位：美元/1M tokens
+            "claude_opus": {"input": 15, "output": 75},
+            "gpt5": {"input": 5, "output": 15},
+            "gpt5_thinking": {"input": 10, "output": 30}
+        }
+
+        # 每日成本上限（美元）
+        self.daily_cost_limit = 1.0
+
+        # 告警阈值
+        self.alert_threshold = 0.8  # 80%时告警
+
+    def record_usage(self, provider: str, input_tokens: int, output_tokens: int):
+        """记录使用"""
+        cost = self._calculate_cost(provider, input_tokens, output_tokens)
+        self.daily_cost += cost
+
+        if self.daily_cost >= self.daily_cost_limit * self.alert_threshold:
+            self._send_alert(f"AI成本已达预算{int(self.alert_threshold*100)}%")
+
+    def get_cost_report(self) -> dict:
+        """获取成本报告"""
+        return {
+            "daily_cost": f"${self.daily_cost:.4f}",
+            "daily_limit": f"${self.daily_cost_limit:.2f}",
+            "usage_percent": f"{(self.daily_cost/self.daily_cost_limit)*100:.1f}%",
+            "by_provider": self.usage_by_provider,
+            "by_task": self.usage_by_task
+        }
+```
+
+---
+
+## 九、持久化格式
+
+### 9.1 存档结构总览
+
+```yaml
+# saves/save_001/manifest.yaml
+save_id: "save_001"
+save_name: "第一个存档"
+created_at: "2024-01-15T10:30:00"
+updated_at: "2024-01-16T15:45:00"
+game_version: "0.1.0"
+play_time_hours: 12.5
+thumbnail: "saves/save_001/screenshot.png"
+
+# 存档文件列表
+files:
+  - world_state.json      # 世界状态
+  - player.json           # 玩家数据
+  - npcs/                 # NPC数据目录
+  - events.json           # 事件状态
+  - story_flags.json      # 剧情标记
+```
+
+### 9.2 世界状态 (world_state.json)
+
+```json
+{
+  "time": {
+    "year": 1,
+    "month": 3,
+    "day": 15,
+    "slot": "afternoon",
+    "total_days_elapsed": 75
+  },
+
+  "calendar": {
+    "current_season": "spring",
+    "upcoming_events": [
+      {"id": "sword_tomb_opening", "date": {"year": 3, "month": 6}}
+    ],
+    "holidays": []
+  },
+
+  "weather": {
+    "current": "clear",
+    "temperature": "warm",
+    "special_condition": null
+  },
+
+  "world_events": {
+    "active": ["beast_tide_warning"],
+    "completed": ["sect_competition_year_1"],
+    "failed": []
+  },
+
+  "resource_state": {
+    "spirit_stone_pool": 15000,
+    "market_prices": {
+      "recovery_pill": 15,
+      "qi_gathering_pill": 50
+    }
+  }
+}
+```
+
+### 9.3 玩家数据 (player.json)
+
+```json
+{
+  "basic": {
+    "name": "玩家自定义名",
+    "age": 17,
+    "gender": "male",
+    "origin": "orphan"
+  },
+
+  "cultivation": {
+    "realm": "qi_refining",
+    "level": 3,
+    "progress": 0.65,
+    "techniques": [
+      {"id": "basic_breathing", "mastery": 0.8},
+      {"id": "cloud_step", "mastery": 0.3}
+    ]
+  },
+
+  "stats": {
+    "hp": {"current": 85, "max": 100},
+    "spirit_power": {"current": 40, "max": 50},
+    "stamina": {"current": 70, "max": 100}
+  },
+
+  "location": {
+    "current": "yunxia_peak",
+    "previous": "practice_ground",
+    "home_base": "player_cave"
+  },
+
+  "inventory": {
+    "spirit_stones": {"low": 150, "mid": 2, "high": 0},
+    "items": [
+      {"id": "jade_pendant", "quantity": 1, "bound": true},
+      {"id": "recovery_pill", "quantity": 5, "bound": false}
+    ],
+    "equipment": {
+      "weapon": "basic_sword",
+      "armor": "disciple_robe",
+      "accessory": "jade_pendant"
+    }
+  },
+
+  "sect_status": {
+    "faction": "qingyun_sect",
+    "rank": "outer_disciple",
+    "contribution": 120,
+    "reputation": 45
+  }
+}
+```
+
+### 9.4 NPC数据 (npcs/atan.json)
+
+```json
+{
+  "id": "atan",
+  "basic": {
+    "name": "沈檀儿",
+    "nickname": "阿檀",
+    "age": 16,
+    "realm": "mortal"
+  },
+
+  "location": {
+    "current": "kitchen",
+    "last_seen_by_player": "kitchen"
+  },
+
+  "state": {
+    "health": "healthy",
+    "mood": "content",
+    "current_activity": "preparing_breakfast",
+    "interrupted_by": null
+  },
+
+  "relationship_with_player": {
+    "trust": 65,
+    "affection": 72,
+    "respect": 55,
+    "fear": 0,
+    "debt": 3,
+
+    "state_label": "亲近",
+    "attitude_tags": ["关心", "依赖", "暗自担忧"],
+
+    "unresolved": [
+      {"type": "promise", "content": "带她去看后山的桃花", "made_on": "year_1_month_2"},
+      {"type": "question", "content": "为什么最近总是很晚才回来"}
+    ]
+  },
+
+  "memories": {
+    "core": [
+      {
+        "id": "first_meeting",
+        "summary": "流浪时相遇，一起分了半块饼",
+        "emotional_weight": 10,
+        "timestamp": "prologue"
+      },
+      {
+        "id": "player_protected_her",
+        "summary": "被欺负时玩家挺身而出挨了打",
+        "emotional_weight": 9,
+        "timestamp": "prologue"
+      }
+    ],
+
+    "recent": [
+      {
+        "id": "mem_001",
+        "summary": "玩家送了一枝野花",
+        "importance": 6,
+        "emotional_impact": "happy",
+        "timestamp": {"year": 1, "month": 3, "day": 10}
+      },
+      {
+        "id": "mem_002",
+        "summary": "玩家连续三天没来看她",
+        "importance": 4,
+        "emotional_impact": "worried",
+        "timestamp": {"year": 1, "month": 3, "day": 12}
+      }
+    ],
+
+    "emotional_ledger": {
+      "positive_balance": 15,
+      "negative_balance": 3,
+      "last_major_event": "mem_001",
+      "days_since_interaction": 2
+    }
+  },
+
+  "secrets": {
+    "level_1_revealed": false,
+    "level_2_revealed": false,
+    "level_3_revealed": false
+  },
+
+  "schedule_overrides": []
+}
+```
+
+### 9.5 事件状态 (events.json)
+
+**重要：所有时间戳使用绝对刻（absolute_tick）存储，便于排序和比较**
+
+```json
+{
+  "format_version": "1.0",
+  "last_saved_tick": 612,
+
+  "triggered_events": [
+    {
+      "id": "atan_daily_greeting_001",
+      "trigger_count": 5,
+      "last_triggered_tick": 600,
+      "last_triggered_display": "第1年春3月14日午后"
+    },
+    {
+      "id": "master_first_teaching",
+      "trigger_count": 1,
+      "last_triggered_tick": 20,
+      "last_triggered_display": "第1年春1月5日早晨"
+    }
+  ],
+
+  "cooldowns": {
+    "atan_daily_greeting_001": {
+      "expires_tick": 616,
+      "expires_display": "第1年春3月15日黄昏"
+    },
+    "random_encounter_forest": {
+      "expires_tick": 624,
+      "expires_display": "第1年春3月16日黄昏"
+    }
+  },
+
+  "active_event_chains": [
+    {
+      "chain_id": "jade_pendant_mystery",
+      "current_step": 2,
+      "started_tick": 128,
+      "started_display": "第1年春2月1日早晨",
+      "deadline_tick": null
+    }
+  ],
+
+  "pending_events": [
+    {
+      "event_id": "sword_tomb_invitation",
+      "scheduled_tick": 2920,
+      "scheduled_display": "第3年春5月1日早晨",
+      "conditions_met": false
+    }
+  ],
+
+  "event_history": [
+    {
+      "event_id": "master_first_teaching",
+      "timestamp_tick": 20,
+      "timestamp_display": "第1年春1月5日早晨",
+      "variant_used": "standard",
+      "player_choice": null,
+      "outcome": "completed"
+    }
+  ]
+}
+```
+
+### 9.6 加载时ID校验
+
+```python
+class EventDataValidator:
+    """事件数据加载校验器"""
+
+    def __init__(self, event_registry: Dict[str, Event]):
+        """
+        Args:
+            event_registry: 游戏定义的所有事件ID -> Event映射
+        """
+        self.registry = event_registry
+
+    def validate_and_repair(self, events_data: dict) -> ValidationReport:
+        """
+        加载时校验events.json，处理ID不匹配问题
+
+        返回:
+            ValidationReport: 包含警告、错误、修复操作
+        """
+        report = ValidationReport()
+
+        # 1. 校验triggered_events中的ID
+        valid_triggered = []
+        for entry in events_data.get("triggered_events", []):
+            event_id = entry.get("id")
+            if event_id not in self.registry:
+                report.add_warning(
+                    f"事件ID '{event_id}' 不存在于当前版本，已从触发记录中移除"
+                )
+                continue
+            valid_triggered.append(entry)
+        events_data["triggered_events"] = valid_triggered
+
+        # 2. 校验cooldowns中的ID
+        valid_cooldowns = {}
+        for event_id, cooldown in events_data.get("cooldowns", {}).items():
+            if event_id not in self.registry:
+                report.add_warning(
+                    f"事件ID '{event_id}' 不存在，冷却记录已移除"
+                )
+                continue
+            valid_cooldowns[event_id] = cooldown
+        events_data["cooldowns"] = valid_cooldowns
+
+        # 3. 校验active_event_chains
+        valid_chains = []
+        for chain in events_data.get("active_event_chains", []):
+            chain_id = chain.get("chain_id")
+            if not self._chain_exists(chain_id):
+                report.add_error(
+                    f"事件链 '{chain_id}' 不存在，请检查游戏版本兼容性"
+                )
+                # 事件链不移除，标记为需要人工处理
+                chain["_invalid"] = True
+            valid_chains.append(chain)
+        events_data["active_event_chains"] = valid_chains
+
+        # 4. 校验pending_events
+        valid_pending = []
+        for pending in events_data.get("pending_events", []):
+            event_id = pending.get("event_id")
+            if event_id not in self.registry:
+                report.add_warning(
+                    f"待触发事件 '{event_id}' 不存在，已移除"
+                )
+                continue
+            valid_pending.append(pending)
+        events_data["pending_events"] = valid_pending
+
+        # 5. 检查时间一致性
+        current_tick = events_data.get("last_saved_tick", 0)
+        for cooldown_id, cooldown in events_data["cooldowns"].items():
+            if cooldown.get("expires_tick", 0) < current_tick:
+                report.add_info(
+                    f"事件 '{cooldown_id}' 冷却已过期，将在加载时清除"
+                )
+                del events_data["cooldowns"][cooldown_id]
+
+        return report
+
+    def _chain_exists(self, chain_id: str) -> bool:
+        """检查事件链是否存在"""
+        # 事件链定义在单独的chain_registry中
+        return chain_id in self.chain_registry
+
+
+@dataclass
+class ValidationReport:
+    """校验报告"""
+    infos: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+    errors: List[str] = field(default_factory=list)
+
+    def add_info(self, msg: str):
+        self.infos.append(msg)
+
+    def add_warning(self, msg: str):
+        self.warnings.append(msg)
+
+    def add_error(self, msg: str):
+        self.errors.append(msg)
+
+    @property
+    def has_errors(self) -> bool:
+        return len(self.errors) > 0
+
+    def to_log(self) -> str:
+        lines = []
+        for info in self.infos:
+            lines.append(f"[INFO] {info}")
+        for warn in self.warnings:
+            lines.append(f"[WARN] {warn}")
+        for err in self.errors:
+            lines.append(f"[ERROR] {err}")
+        return "\n".join(lines)
+
+
+# ============ 绝对刻计算 ============
+class TickCalculator:
+    """
+    绝对刻（absolute_tick）计算器
+
+    时间结构（与 03_systems.md、06_specifications.md 统一）：
+    - 1天 = 4时段 = 8时辰（每时段2时辰）
+    - 1月 = 30天
+    - 1年 = 12月
+
+    tick 定义：
+    - 1 tick = 1 时段（即2时辰）
+    - 绝对刻 = 从游戏开始经过的时段总数
+    - 公式: (year-1)*12*30*4 + (month-1)*30*4 + (day-1)*4 + slot_index
+
+    换算关系：
+    - 1天 = 4 ticks (= 4时段 = 8时辰)
+    - 1月 = 120 ticks
+    - 1年 = 1440 ticks
+
+    如需以时辰为最小单位，可使用 tick * 2 转换为时辰数。
+    """
+
+    SLOTS_PER_DAY = 4          # 每天4个时段
+    TICKS_PER_DAY = 4          # 每天4个tick（1 tick = 1 时段）
+    HOURS_PER_SLOT = 2         # 每时段2时辰
+    HOURS_PER_DAY = 8          # 每天8时辰
+    DAYS_PER_MONTH = 30
+    MONTHS_PER_YEAR = 12
+
+    SLOT_INDEX = {
+        "morning": 0,
+        "afternoon": 1,
+        "evening": 2,
+        "night": 3
+    }
+
+    @classmethod
+    def to_tick(cls, year: int, month: int, day: int, slot: str) -> int:
+        """将游戏时间转换为绝对刻"""
+        slot_idx = cls.SLOT_INDEX.get(slot, 0)
+        return (
+            (year - 1) * cls.MONTHS_PER_YEAR * cls.DAYS_PER_MONTH * cls.SLOTS_PER_DAY +
+            (month - 1) * cls.DAYS_PER_MONTH * cls.SLOTS_PER_DAY +
+            (day - 1) * cls.SLOTS_PER_DAY +
+            slot_idx
+        )
+
+    @classmethod
+    def from_tick(cls, tick: int) -> dict:
+        """将绝对刻转换为游戏时间"""
+        slots_per_year = cls.MONTHS_PER_YEAR * cls.DAYS_PER_MONTH * cls.SLOTS_PER_DAY
+        slots_per_month = cls.DAYS_PER_MONTH * cls.SLOTS_PER_DAY
+
+        year = tick // slots_per_year + 1
+        remainder = tick % slots_per_year
+
+        month = remainder // slots_per_month + 1
+        remainder = remainder % slots_per_month
+
+        day = remainder // cls.SLOTS_PER_DAY + 1
+        slot_idx = remainder % cls.SLOTS_PER_DAY
+
+        slot_names = ["morning", "afternoon", "evening", "night"]
+
+        return {
+            "year": year,
+            "month": month,
+            "day": day,
+            "slot": slot_names[slot_idx]
+        }
+
+    @classmethod
+    def to_display(cls, tick: int) -> str:
+        """将绝对刻转换为显示字符串"""
+        t = cls.from_tick(tick)
+        seasons = ["春", "夏", "秋", "冬"]
+        season = seasons[(t["month"] - 1) // 3]
+        slot_names = {
+            "morning": "早晨",
+            "afternoon": "午后",
+            "evening": "黄昏",
+            "night": "夜晚"
+        }
+        return f"第{t['year']}年{season}{t['month']}月{t['day']}日{slot_names[t['slot']]}"
+```
+
+### 9.7 剧情标记 (story_flags.json)
+
+```json
+{
+  "main_storylines": {
+    "revenge": {
+      "phase": 1,
+      "flags": {
+        "parents_death_known": true,
+        "jade_pendant_activated": false,
+        "enemy_first_encounter": false
+      }
+    },
+    "bond": {
+      "phase": 1,
+      "flags": {
+        "atan_awakening_hint": false,
+        "atan_confession": false
+      }
+    },
+    "truth": {
+      "phase": 0,
+      "flags": {}
+    }
+  },
+
+  "world_flags": {
+    "joined_sect": true,
+    "completed_first_mission": true,
+    "met_senior_brother": true,
+    "met_junior_sister": true
+  },
+
+  "npc_flags": {
+    "atan": {
+      "knows_player_identity": false,
+      "cultivation_started": false
+    },
+    "master": {
+      "shared_wine": false,
+      "mentioned_past": false
+    }
+  },
+
+  "achievements": [
+    {"id": "first_breakthrough", "unlocked_at": {"year": 1, "month": 2, "day": 15}},
+    {"id": "first_friend", "unlocked_at": {"year": 1, "month": 1, "day": 1}}
+  ]
+}
+```
+
+### 9.8 存档读写接口
+
+```python
+class SaveManager:
+    """存档管理器"""
+
+    SAVE_VERSION = "1.0"
+
+    def save(self, save_id: str, save_name: str = None):
+        """保存游戏"""
+        save_dir = Path(f"data/saves/{save_id}")
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. 保存manifest
+        manifest = {
+            "save_id": save_id,
+            "save_name": save_name or f"存档 {save_id}",
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+            "game_version": GAME_VERSION,
+            "save_format_version": self.SAVE_VERSION,
+            "play_time_hours": self.game.play_time_hours
+        }
+        self._write_yaml(save_dir / "manifest.yaml", manifest)
+
+        # 2. 保存各模块数据
+        self._write_json(save_dir / "world_state.json",
+                        self.world_manager.serialize())
+        self._write_json(save_dir / "player.json",
+                        self.player.serialize())
+        self._write_json(save_dir / "events.json",
+                        self.event_manager.serialize())
+        self._write_json(save_dir / "story_flags.json",
+                        self.story_manager.serialize())
+
+        # 3. 保存NPC数据
+        npcs_dir = save_dir / "npcs"
+        npcs_dir.mkdir(exist_ok=True)
+        for npc in self.character_manager.all_npcs():
+            self._write_json(npcs_dir / f"{npc.id}.json", npc.serialize())
+
+        return save_dir
+
+    def load(self, save_id: str):
+        """加载游戏"""
+        save_dir = Path(f"data/saves/{save_id}")
+
+        # 1. 读取manifest，检查版本
+        manifest = self._read_yaml(save_dir / "manifest.yaml")
+        self._check_version_compatibility(manifest["save_format_version"])
+
+        # 2. 加载各模块
+        self.world_manager.deserialize(
+            self._read_json(save_dir / "world_state.json"))
+        self.player.deserialize(
+            self._read_json(save_dir / "player.json"))
+        self.event_manager.deserialize(
+            self._read_json(save_dir / "events.json"))
+        self.story_manager.deserialize(
+            self._read_json(save_dir / "story_flags.json"))
+
+        # 3. 加载NPC数据
+        npcs_dir = save_dir / "npcs"
+        for npc_file in npcs_dir.glob("*.json"):
+            npc_data = self._read_json(npc_file)
+            self.character_manager.load_npc(npc_data)
+
+    def auto_save(self):
+        """自动存档（每推进1天调用）"""
+        self.save("autosave", "自动存档")
+
+    def list_saves(self) -> List[SaveInfo]:
+        """列出所有存档"""
+        saves_dir = Path("data/saves")
+        saves = []
+
+        for save_dir in saves_dir.iterdir():
+            if save_dir.is_dir():
+                manifest_path = save_dir / "manifest.yaml"
+                if manifest_path.exists():
+                    manifest = self._read_yaml(manifest_path)
+                    saves.append(SaveInfo(
+                        save_id=manifest["save_id"],
+                        save_name=manifest["save_name"],
+                        updated_at=manifest["updated_at"],
+                        play_time=manifest["play_time_hours"]
+                    ))
+
+        return sorted(saves, key=lambda s: s.updated_at, reverse=True)
+```
+
+### 9.9 数据迁移策略
+
+```python
+class SaveMigrator:
+    """存档版本迁移"""
+
+    MIGRATIONS = {
+        ("1.0", "1.1"): "_migrate_1_0_to_1_1",
+        ("1.1", "1.2"): "_migrate_1_1_to_1_2",
+    }
+
+    def migrate(self, save_data: dict, from_version: str, to_version: str) -> dict:
+        """执行迁移"""
+        current = from_version
+
+        while current != to_version:
+            migration_key = (current, self._next_version(current))
+            if migration_key not in self.MIGRATIONS:
+                raise MigrationError(f"No migration path from {current}")
+
+            migration_func = getattr(self, self.MIGRATIONS[migration_key])
+            save_data = migration_func(save_data)
+            current = migration_key[1]
+
+        return save_data
+
+    def _migrate_1_0_to_1_1(self, data: dict) -> dict:
+        """示例迁移：添加新字段"""
+        # 为player添加新的stats字段
+        if "mental_state" not in data["player"]["stats"]:
+            data["player"]["stats"]["mental_state"] = {"current": 100, "max": 100}
+
+        # 更新版本号
+        data["manifest"]["save_format_version"] = "1.1"
+        return data
+```
+
+---
+
+*本文档定义了技术实现的整体架构。核心原则：规则驱动世界运转，AI负责叙事润色，分工明确，不越界。AI成本需要精细管控，持久化需要版本兼容。*
