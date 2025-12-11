@@ -1,10 +1,10 @@
 """
 阿檀 - 混合AI版本
 
-使用混合AI引擎：
-- Claude：情感对话（阿檀的灵魂）
-- GPT：场景叙事（画面感）
-- Gemini：记忆总结（长上下文）
+使用混合AI引擎（三大顶级模型）：
+- Claude Opus 4.5：情感对话（阿檀的灵魂）
+- GPT 5.1：场景叙事（画面感）
+- GPT 5.1 Thinking：记忆总结（深度推理）
 """
 
 import os
@@ -316,7 +316,14 @@ class AtanHybridAI:
             (回应文本, 使用的AI)
         """
         scene = SCENES.get(self.current_scene, {})
-        scene_context = f"场景：{scene.get('name', '未知')}，氛围：{scene.get('atmosphere', '普通')}"
+        scene_context = f"""## 当前场景
+- 名称：{scene.get('name', '未知')}
+- 地点：{scene.get('location', '未知')}
+- 时间：{scene.get('time', '未知')}
+- 环境特征：{', '.join(scene.get('features', []))}
+- 氛围：{scene.get('atmosphere', '普通')}
+
+【重要】你的动作描写必须符合当前场景，不要出现其他场景的元素。"""
 
         # 使用Claude生成对话
         response, provider = self.engine.generate_dialogue(
@@ -400,10 +407,10 @@ class EmotionPrototypeHybrid:
         print("\n" + "=" * 60)
         print("  阿 檀 - 混合AI版")
         print("=" * 60)
-        print("\n混合AI引擎：")
-        print("  - Claude：情感对话（阿檀的灵魂）")
-        print("  - GPT：场景叙事（画面感）")
-        print("  - Gemini：记忆总结（长上下文）")
+        print("\n混合AI引擎（三大顶级模型）：")
+        print("  - Claude Opus 4.5：情感对话（阿檀的灵魂）")
+        print("  - GPT 5.1：场景叙事（画面感）")
+        print("  - GPT 5.1 Thinking：记忆总结（深度推理）")
         print("\n命令：")
         print("  /scene [名称] - 切换场景（reunion/daily/farewell）")
         print("  /status - 查看阿檀的情感状态")

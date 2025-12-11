@@ -1,10 +1,14 @@
 """
 混合AI引擎
 
-分工：
-- Claude：情感对话、角色扮演（稳定、细腻）
-- GPT：世界叙事、战斗描写（创意、戏剧性）
-- Gemini：长期记忆、剧情总结（1M上下文）
+使用 evolink.ai API 调用三大顶级模型：
+- Claude Opus 4.5：情感对话、角色扮演（最细腻的情感理解）
+- GPT 5.1：创意叙事、战斗描写（最强的画面感和创意）
+- GPT 5.1 Thinking：长期记忆、复杂推理（深度思考能力）
+
+API格式说明：
+- Claude: Anthropic 原生格式 (https://api.evolink.ai/v1/messages)
+- GPT: OpenAI 兼容格式 (https://api.evolink.ai/v1/chat/completions)
 
 设计原则：
 1. 每个AI只做自己最擅长的事
@@ -14,20 +18,36 @@
 
 import os
 import json
-from typing import Optional, Dict, Any, Generator, Literal
+import requests
+from typing import Optional, Dict, Any, List
 from abc import ABC, abstractmethod
 from enum import Enum
 
 
+# ============ 配置 ============
+
+# evolink.ai API配置
+API_KEY = os.getenv("EVOLINK_API_KEY", "sk-Z4apIc8CO8sxw39teQ1OiKt9qjRKeWNpIM9qeosIgsF65NTn")
+CLAUDE_API_URL = "https://api.evolink.ai/v1/messages"      # Claude Anthropic格式
+OPENAI_API_URL = "https://api.evolink.ai/v1/chat/completions"  # GPT OpenAI格式
+
+# 三大顶级模型
+MODELS = {
+    "claude_opus": "claude-opus-4-5-20251101",  # Claude Opus 4.5 - 情感对话
+    "gpt5": "gpt-5.1",                          # GPT 5.1 - 创意叙事
+    "gpt5_thinking": "gpt-5.1-thinking",        # GPT 5.1 Thinking - 深度推理
+}
+
+
 class TaskType(Enum):
     """任务类型"""
-    DIALOGUE = "dialogue"          # NPC对话（Claude）
-    EMOTION = "emotion"            # 情感分析（Claude）
-    NARRATIVE = "narrative"        # 场景叙事（GPT）
-    COMBAT = "combat"              # 战斗描写（GPT）
-    MEMORY = "memory"              # 记忆总结（Gemini）
-    WORLD_EVENT = "world_event"    # 世界事件（GPT）
-    GENERAL = "general"            # 通用（默认Claude）
+    DIALOGUE = "dialogue"          # NPC对话（Claude Opus）
+    EMOTION = "emotion"            # 情感分析（Claude Opus）
+    NARRATIVE = "narrative"        # 场景叙事（GPT 5.1）
+    COMBAT = "combat"              # 战斗描写（GPT 5.1）
+    MEMORY = "memory"              # 记忆总结（GPT 5.1 Thinking）
+    WORLD_EVENT = "world_event"    # 世界事件（GPT 5.1）
+    GENERAL = "general"            # 通用（默认GPT 5.1）
 
 
 class AIProvider(ABC):
@@ -48,131 +68,94 @@ class AIProvider(ABC):
 
 
 class ClaudeProvider(AIProvider):
-    """Claude API - 情感对话专家"""
+    """
+    Claude 提供者
+    使用 Anthropic 原生格式调用 Claude 模型
+    """
 
-    def __init__(self, api_key: Optional[str] = None, model: str = "claude-sonnet-4-20250514"):
-        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
-        self.model = model
-        self._client = None
+    def __init__(self, model_key: str = "claude_opus", api_key: str = API_KEY):
+        self.model_key = model_key
+        self.model = MODELS.get(model_key, model_key)
+        self.api_key = api_key
+        self.api_url = CLAUDE_API_URL
 
     @property
     def name(self) -> str:
-        return f"Claude ({self.model})"
+        return "Claude Opus 4.5"
 
     def is_available(self) -> bool:
         return bool(self.api_key)
 
-    def _get_client(self):
-        if self._client is None:
-            import anthropic
-            self._client = anthropic.Anthropic(api_key=self.api_key)
-        return self._client
-
     def generate(self, prompt: str, system: str = "", **kwargs) -> str:
-        client = self._get_client()
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
 
-        messages = [{"role": "user", "content": prompt}]
-
-        params = {
+        # Anthropic 原生格式
+        data = {
             "model": self.model,
             "max_tokens": kwargs.get("max_tokens", 2000),
-            "messages": messages,
-            "temperature": kwargs.get("temperature", 0.8)
+            "messages": [{"role": "user", "content": prompt}]
         }
 
+        # 添加系统提示
         if system:
-            params["system"] = system
+            data["system"] = system
 
-        response = client.messages.create(**params)
-        return response.content[0].text
+        response = requests.post(self.api_url, headers=headers, json=data, timeout=60)
+        response.raise_for_status()
 
-    def switch_model(self, model: str):
-        """切换模型（sonnet/opus）"""
-        models = {
-            "sonnet": "claude-sonnet-4-20250514",
-            "opus": "claude-opus-4-20250514",
-            "haiku": "claude-3-5-haiku-20241022"
-        }
-        self.model = models.get(model, model)
+        result = response.json()
+        return result["content"][0]["text"]
 
 
-class OpenAIProvider(AIProvider):
-    """OpenAI API - 创意叙事专家"""
+class GPTProvider(AIProvider):
+    """
+    GPT 提供者
+    使用 OpenAI 兼容格式调用 GPT 5.1 模型
+    """
 
-    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o"):
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        self.model = model
-        self._client = None
+    def __init__(self, model_key: str = "gpt5", api_key: str = API_KEY):
+        self.model_key = model_key
+        self.model = MODELS.get(model_key, model_key)
+        self.api_key = api_key
+        self.api_url = OPENAI_API_URL
 
     @property
     def name(self) -> str:
-        return f"GPT ({self.model})"
+        model_names = {
+            "gpt5": "GPT 5.1",
+            "gpt5_thinking": "GPT 5.1 Thinking"
+        }
+        return model_names.get(self.model_key, self.model)
 
     def is_available(self) -> bool:
         return bool(self.api_key)
 
-    def _get_client(self):
-        if self._client is None:
-            from openai import OpenAI
-            self._client = OpenAI(api_key=self.api_key)
-        return self._client
-
     def generate(self, prompt: str, system: str = "", **kwargs) -> str:
-        client = self._get_client()
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
 
+        # OpenAI 兼容格式
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
-        response = client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            max_tokens=kwargs.get("max_tokens", 2000),
-            temperature=kwargs.get("temperature", 0.8)
-        )
+        data = {
+            "model": self.model,
+            "max_tokens": kwargs.get("max_tokens", 2000),
+            "messages": messages
+        }
 
-        return response.choices[0].message.content
+        response = requests.post(self.api_url, headers=headers, json=data, timeout=60)
+        response.raise_for_status()
 
-
-class GeminiProvider(AIProvider):
-    """Gemini API - 长上下文记忆专家"""
-
-    def __init__(self, api_key: Optional[str] = None, model: str = "gemini-2.5-pro"):
-        self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
-        self.model = model
-        self._client = None
-
-    @property
-    def name(self) -> str:
-        return f"Gemini ({self.model})"
-
-    def is_available(self) -> bool:
-        return bool(self.api_key)
-
-    def _get_client(self):
-        if self._client is None:
-            import google.generativeai as genai
-            genai.configure(api_key=self.api_key)
-            self._client = genai.GenerativeModel(self.model)
-        return self._client
-
-    def generate(self, prompt: str, system: str = "", **kwargs) -> str:
-        client = self._get_client()
-
-        full_prompt = prompt
-        if system:
-            full_prompt = f"{system}\n\n---\n\n{prompt}"
-
-        response = client.generate_content(
-            full_prompt,
-            generation_config={
-                "max_output_tokens": kwargs.get("max_tokens", 2000),
-                "temperature": kwargs.get("temperature", 0.8)
-            }
-        )
-
-        return response.text
+        result = response.json()
+        return result["choices"][0]["message"]["content"]
 
 
 class MockProvider(AIProvider):
@@ -195,34 +178,51 @@ class MockProvider(AIProvider):
 # ============ 混合引擎 ============
 
 class HybridAIEngine:
-    """混合AI引擎 - 智能路由到最适合的AI"""
+    """
+    混合AI引擎 - 智能路由到最适合的AI
 
-    def __init__(self):
-        # 初始化所有提供者
+    路由策略：
+    - 对话/情感 → Claude Opus 4.5（最细腻的情感理解）
+    - 叙事/战斗/世界事件 → GPT 5.1（最强的画面感和创意）
+    - 记忆总结/复杂推理 → GPT 5.1 Thinking（深度思考）
+    """
+
+    def __init__(self, api_key: str = API_KEY):
+        self.api_key = api_key
+
+        # 初始化三大顶级模型提供者
         self.providers: Dict[str, AIProvider] = {
-            "claude": ClaudeProvider(),
-            "gpt": OpenAIProvider(),
-            "gemini": GeminiProvider(),
+            "claude_opus": ClaudeProvider("claude_opus", api_key),
+            "gpt5": GPTProvider("gpt5", api_key),
+            "gpt5_thinking": GPTProvider("gpt5_thinking", api_key),
             "mock": MockProvider()
         }
 
         # 任务路由表：任务类型 -> 优先使用的AI列表
-        self.routing_table: Dict[TaskType, list] = {
-            TaskType.DIALOGUE: ["claude", "gpt", "gemini"],    # 对话首选Claude
-            TaskType.EMOTION: ["claude", "gpt", "gemini"],     # 情感首选Claude
-            TaskType.NARRATIVE: ["gpt", "claude", "gemini"],   # 叙事首选GPT
-            TaskType.COMBAT: ["gpt", "claude", "gemini"],      # 战斗首选GPT
-            TaskType.MEMORY: ["gemini", "claude", "gpt"],      # 记忆首选Gemini
-            TaskType.WORLD_EVENT: ["gpt", "claude", "gemini"], # 世界事件首选GPT
-            TaskType.GENERAL: ["claude", "gpt", "gemini"],     # 通用首选Claude
+        self.routing_table: Dict[TaskType, List[str]] = {
+            TaskType.DIALOGUE: ["claude_opus", "gpt5", "gpt5_thinking"],       # 对话首选Claude
+            TaskType.EMOTION: ["claude_opus", "gpt5", "gpt5_thinking"],        # 情感首选Claude
+            TaskType.NARRATIVE: ["gpt5", "claude_opus", "gpt5_thinking"],      # 叙事首选GPT
+            TaskType.COMBAT: ["gpt5", "claude_opus", "gpt5_thinking"],         # 战斗首选GPT
+            TaskType.MEMORY: ["gpt5_thinking", "claude_opus", "gpt5"],         # 记忆首选Thinking
+            TaskType.WORLD_EVENT: ["gpt5", "claude_opus", "gpt5_thinking"],    # 世界事件首选GPT
+            TaskType.GENERAL: ["gpt5", "claude_opus", "gpt5_thinking"],        # 通用首选GPT
         }
 
         # 统计
-        self.stats = {provider: {"calls": 0, "tokens": 0} for provider in self.providers}
+        self.stats = {provider: {"calls": 0, "errors": 0} for provider in self.providers}
 
     def get_available_providers(self) -> Dict[str, bool]:
         """获取可用的提供者"""
         return {name: provider.is_available() for name, provider in self.providers.items()}
+
+    def get_model_info(self) -> Dict[str, str]:
+        """获取模型信息"""
+        return {
+            "claude_opus": f"{MODELS['claude_opus']} (情感对话)",
+            "gpt5": f"{MODELS['gpt5']} (创意叙事)",
+            "gpt5_thinking": f"{MODELS['gpt5_thinking']} (深度推理)",
+        }
 
     def generate(self,
                  prompt: str,
@@ -246,7 +246,7 @@ class HybridAIEngine:
         if force_provider and force_provider in self.providers:
             provider_order = [force_provider]
         else:
-            provider_order = self.routing_table.get(task_type, ["claude", "gpt", "gemini"])
+            provider_order = self.routing_table.get(task_type, ["gpt5", "claude_opus", "gpt5_thinking"])
 
         # 按优先级尝试
         last_error = None
@@ -260,7 +260,9 @@ class HybridAIEngine:
                 self.stats[provider_name]["calls"] += 1
                 return response, provider.name
             except Exception as e:
+                self.stats[provider_name]["errors"] += 1
                 last_error = e
+                print(f"[{provider.name}] 调用失败: {e}")
                 continue
 
         # 所有AI都失败，使用Mock
@@ -278,7 +280,7 @@ class HybridAIEngine:
                           player_input: str,
                           scene_context: str = "") -> tuple[str, str]:
         """
-        生成NPC对话（使用Claude）
+        生成NPC对话（使用Claude Opus 4.5）
 
         这是情感的核心，必须用最擅长角色扮演的AI
         """
@@ -309,7 +311,7 @@ class HybridAIEngine:
                            event: str,
                            mood: str = "neutral") -> tuple[str, str]:
         """
-        生成场景叙事（使用GPT）
+        生成场景叙事（使用GPT-4.1）
 
         追求创意和戏剧性
         """
@@ -347,7 +349,7 @@ class HybridAIEngine:
                                   combat_log: list,
                                   intensity: str = "normal") -> tuple[str, str]:
         """
-        生成战斗叙述（使用GPT）
+        生成战斗叙述（使用GPT-4.1）
 
         追求视觉冲击和节奏感
         """
@@ -385,9 +387,9 @@ class HybridAIEngine:
                          memories: list,
                          focus: str = "general") -> tuple[str, str]:
         """
-        总结记忆（使用Gemini）
+        总结记忆（使用Gemini 2.5 Pro）
 
-        利用长上下文能力处理大量历史
+        利用1M上下文能力处理大量历史
         """
         system = """你是一个记忆总结专家。
 
@@ -424,7 +426,7 @@ class HybridAIEngine:
                         npc_response: str,
                         npc_personality: str) -> tuple[Dict, str]:
         """
-        分析情感影响（使用Claude）
+        分析情感影响（使用Claude Opus 4.5）
 
         需要细腻的情感理解
         """
@@ -454,7 +456,6 @@ class HybridAIEngine:
 
         try:
             # 尝试解析JSON
-            # 处理可能的markdown代码块
             json_str = response
             if "```json" in json_str:
                 json_str = json_str.split("```json")[1].split("```")[0]
@@ -464,7 +465,6 @@ class HybridAIEngine:
             result = json.loads(json_str.strip())
             return result, provider
         except json.JSONDecodeError:
-            # 解析失败，返回默认值
             return {
                 "event_summary": "对话",
                 "emotion": "复杂",
@@ -478,7 +478,7 @@ class HybridAIEngine:
                              time_passed: int,
                              player_actions: list) -> tuple[str, str]:
         """
-        生成世界事件（使用GPT）
+        生成世界事件（使用GPT-4.1）
 
         需要创意和戏剧性
         """
@@ -518,6 +518,7 @@ class HybridAIEngine:
         """获取使用统计"""
         return {
             "providers": self.get_available_providers(),
+            "models": self.get_model_info(),
             "usage": self.stats
         }
 
@@ -553,32 +554,89 @@ def analyze_emotion(player_input: str, npc_response: str, npc_personality: str):
 # ============ 测试 ============
 
 if __name__ == "__main__":
+    print("=" * 60)
+    print("  混合AI引擎 - evolink.ai API")
+    print("=" * 60)
+
     engine = HybridAIEngine()
 
-    print("=" * 50)
-    print("混合AI引擎状态")
-    print("=" * 50)
+    print("\n【模型配置】")
+    for key, info in engine.get_model_info().items():
+        print(f"  {key}: {info}")
 
+    print("\n【路由策略】")
+    for task_type, route in engine.routing_table.items():
+        route_names = [engine.providers[r].name for r in route]
+        print(f"  {task_type.value}: {' → '.join(route_names)}")
+
+    print("\n【API状态】")
     providers = engine.get_available_providers()
     for name, available in providers.items():
-        status = "✓ 可用" if available else "✗ 未配置"
-        print(f"  {name}: {status}")
+        if name != "mock":
+            status = "✓ 已配置" if available else "✗ 未配置"
+            print(f"  {name}: {status}")
 
-    print("\n路由表：")
-    for task_type, route in engine.routing_table.items():
-        print(f"  {task_type.value}: {' -> '.join(route)}")
+    print("\n" + "=" * 60)
+    print("  测试调用")
+    print("=" * 60)
 
-    print("\n" + "=" * 50)
-    print("测试生成")
-    print("=" * 50)
+    # 测试对话生成（Claude Opus）
+    print("\n[1] 测试对话生成（Claude Opus 4.5）...")
+    try:
+        response, provider = engine.generate(
+            "你好，阿檀",
+            system="你是阿檀，一个温柔的少女。",
+            task_type=TaskType.DIALOGUE,
+            max_tokens=200
+        )
+        print(f"  提供者: {provider}")
+        print(f"  响应: {response[:150]}...")
+    except Exception as e:
+        print(f"  错误: {e}")
 
-    # 测试对话生成
-    response, provider = engine.generate(
-        "你好",
-        task_type=TaskType.DIALOGUE
-    )
-    print(f"\n对话测试（使用 {provider}）:")
-    print(f"  {response[:100]}...")
+    # 测试叙事生成（GPT 5.1）
+    print("\n[2] 测试叙事生成（GPT 5.1）...")
+    try:
+        response, provider = engine.generate(
+            "描述一个夕阳下的小溪边场景",
+            task_type=TaskType.NARRATIVE,
+            max_tokens=200
+        )
+        print(f"  提供者: {provider}")
+        print(f"  响应: {response[:150]}...")
+    except Exception as e:
+        print(f"  错误: {e}")
 
-    print("\n统计：")
-    print(engine.get_stats())
+    # 测试记忆总结（GPT 5.1 Thinking）
+    print("\n[3] 测试记忆总结（GPT 5.1 Thinking）...")
+    try:
+        response, provider = engine.generate(
+            "总结：玩家见到了阿檀，两人聊了很多往事。",
+            task_type=TaskType.MEMORY,
+            max_tokens=200
+        )
+        print(f"  提供者: {provider}")
+        print(f"  响应: {response[:150]}...")
+    except Exception as e:
+        print(f"  错误: {e}")
+
+    # 测试通用任务（GPT 5.1）
+    print("\n[4] 测试通用任务（GPT 5.1）...")
+    try:
+        response, provider = engine.generate(
+            "你好",
+            task_type=TaskType.GENERAL,
+            max_tokens=100
+        )
+        print(f"  提供者: {provider}")
+        print(f"  响应: {response[:100]}...")
+    except Exception as e:
+        print(f"  错误: {e}")
+
+    print("\n【调用统计】")
+    stats = engine.get_stats()
+    for provider, data in stats["usage"].items():
+        if data["calls"] > 0 or data["errors"] > 0:
+            print(f"  {provider}: {data['calls']} 次调用, {data['errors']} 次错误")
+
+    print("\n" + "=" * 60)
