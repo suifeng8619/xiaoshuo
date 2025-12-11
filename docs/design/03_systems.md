@@ -40,37 +40,44 @@
     - 某些秘境只在特定季节开启
 
 时间换算:
-  1天 = 12时辰 = 4时段
-  1月 = 30天
-  1季 = 3月
-  1年 = 12月 = 4季
+  1天 = 8时辰 = 4时段（每时段2时辰）
+  1月 = 30天 = 240时辰
+  1季 = 3月 = 720时辰
+  1年 = 12月 = 4季 = 2880时辰
 
   游戏内1年 ≈ 现实2-3小时游玩
+
+  注意：游戏采用简化时间系统，与古代12时辰制不同。
+  1时辰 = 2小时现实时间等效，1日8时辰覆盖16小时活动周期。
 ```
 
 ### 1.2 时段定义
 
 ```yaml
 时段详情:
+  # 每时段 = 2时辰 = 4小时现实时间等效
+
   早 (morning):
-    时辰: 卯时-辰时 (05:00-09:00)
+    时辰范围: 第1-2时辰 (05:00-09:00)
     典型活动: 早课、晨练、洒扫
     NPC状态: 精神饱满
 
   午 (afternoon):
-    时辰: 巳时-午时 (09:00-13:00)
+    时辰范围: 第3-4时辰 (09:00-13:00)
     典型活动: 修炼、任务、采药
     NPC状态: 活跃
 
   晚 (evening):
-    时辰: 未时-酉时 (13:00-19:00)
+    时辰范围: 第5-6时辰 (13:00-17:00)
     典型活动: 自由活动、会友、采购
     NPC状态: 放松
 
   夜 (night):
-    时辰: 戌时-子时 (19:00-01:00)
+    时辰范围: 第7-8时辰 (17:00-21:00)
     典型活动: 夜修、休息、密谈
     NPC状态: 疲惫/警惕
+
+  # 注：21:00-05:00为休眠期，不计入活动时辰
 ```
 
 ### 1.3 长行动结算流程
@@ -81,7 +88,7 @@
 长行动结算:
   1. 计算持续天数:
      - 闭关修炼: 根据目标境界计算
-     - 远行历练: 根据目的地距离计算
+     - 远行历练: 根据目的地距离计算（travel_time / 8，向上取整）
      - 疗伤恢复: 根据伤势严重程度计算
 
   2. 逐日快速模拟:
@@ -90,6 +97,7 @@
        - 检查时间窗事件
        - roll随机扰动
        - 更新世界状态标记
+       - 【重要】执行日结算（见下方）
 
   3. 事件检查:
      - 如果有高优先级事件满足触发条件
@@ -112,6 +120,337 @@
   如果事件是"仇人袭击"且 interrupt: true
   → 第15天强制中断闭关
   → 输出："一声巨响将你从定中唤醒——有人闯入山门！"
+```
+
+### 1.3.1 长行动期间的结算钩子（关键补充）
+
+```python
+class LongActionSettlement:
+    """
+    长行动期间的各类结算
+
+    核心问题：玩家闭关30天，世界发生了什么？
+    - NPC的日程照常执行
+    - 关系照常衰减
+    - 事件照常触发（可能打断或排队）
+    - 经济照常结算
+    """
+
+    # 衰减率（每月）
+    MONTHLY_DECAY_RATES = {
+        'trust': 0.5,      # 信任每月衰减0.5
+        'affection': 0.3,  # 好感每月衰减0.3
+        'respect': 0.2,    # 尊重每月衰减0.2
+        'fear': 1.0,       # 恐惧消退快
+    }
+
+    def simulate_long_action(self, duration_days: int,
+                              action_type: str,
+                              player_location: str) -> LongActionResult:
+        """
+        模拟长行动期间的世界运转
+
+        示例：闭关30天
+        - 每日衰减：trust -0.017/天, affection -0.01/天
+        - 30天累计：trust -0.5, affection -0.3
+        - 互动计数：days_since_interaction += 30
+        """
+        result = LongActionResult()
+        days_completed = 0
+
+        for day in range(duration_days):
+            # === 每日结算 ===
+
+            # 1. 执行NPC日程
+            for npc in self.character_manager.all_npcs():
+                for slot in ['morning', 'afternoon', 'evening', 'night']:
+                    self._execute_npc_schedule(npc, slot)
+
+            # 2. 关系衰减（每日）
+            for npc_id in self.character_manager.get_all_npc_ids():
+                relationship = self.character_manager.get_relationship(npc_id)
+                npc_memory = self.character_manager.get_npc(npc_id).memory
+
+                # 应用衰减
+                for dimension, monthly_rate in self.MONTHLY_DECAY_RATES.items():
+                    daily_rate = monthly_rate / 30
+                    current = getattr(relationship, dimension)
+                    if current > 50:  # 只有超过中性基准才衰减
+                        new_value = max(50, current - daily_rate)
+                        setattr(relationship, dimension, new_value)
+
+                # 更新互动计数
+                npc_memory.days_since_interaction += 1
+
+                # 检查忽视阈值
+                if npc_memory.days_since_interaction >= 30:
+                    result.neglect_events.append(npc_id)
+
+            # 3. 检查打断事件
+            interrupt = self.event_scheduler.check_interrupt_events(
+                action_type, day, player_location
+            )
+            if interrupt:
+                result.interrupted = True
+                result.interrupt_event = interrupt
+                result.days_completed = days_completed
+                return result
+
+            # 4. 检查NPC主动寻找
+            for npc_id in ['atan', 'junior_linxueyao']:  # 会关心玩家的NPC
+                if self._should_npc_seek_player(npc_id, day):
+                    result.missed_visits.append({
+                        'npc': npc_id,
+                        'day': day,
+                        'reason': '来看望你但你在闭关'
+                    })
+
+            days_completed += 1
+
+            # === 每周结算（每7天）===
+            if days_completed % 7 == 0:
+                self._weekly_settlement()
+
+            # === 每月结算（每30天）===
+            if days_completed % 30 == 0:
+                self._monthly_settlement()
+
+        result.completed = True
+        result.days_completed = days_completed
+        result.total_decay = self._calculate_total_decay(duration_days)
+        return result
+
+    def _calculate_total_decay(self, days: int) -> Dict:
+        """计算总衰减量"""
+        decay = {}
+        for npc_id in self.character_manager.get_all_npc_ids():
+            npc_decay = {}
+            for dimension, monthly_rate in self.MONTHLY_DECAY_RATES.items():
+                daily_rate = monthly_rate / 30
+                total = daily_rate * days
+                npc_decay[dimension] = -min(total, 50)  # 最多衰减到50
+            decay[npc_id] = npc_decay
+        return decay
+
+    def _should_npc_seek_player(self, npc_id: str, day: int) -> bool:
+        """判断NPC是否会主动寻找玩家"""
+        relationship = self.character_manager.get_relationship(npc_id)
+
+        # 好感度越高越早来找
+        concern_threshold = max(3, (100 - relationship.affection) // 10)
+
+        if day >= concern_threshold:
+            return random.random() < 0.3  # 30%概率
+        return False
+```
+
+### 1.3.2 结算钩子时机表
+
+```yaml
+settlement_hooks:
+  # 每时段
+  per_slot:
+    - npc_schedule_execution    # NPC日程执行
+    - event_trigger_check       # 事件触发检查
+    - random_perturbation_roll  # 随机扰动
+
+  # 每日（日结算）
+  per_day:
+    timing: "每天night时段结束后"
+    hooks:
+      - relationship_decay_daily        # 关系衰减（按月衰减率/30）
+      - days_since_interaction += 1     # 未互动天数增加
+      - pending_events_expiry_check     # 过期事件检查
+      - npc_emotion_decay               # 情绪衰减
+      - economy_daily_expense           # 每日消耗扣款（如果适用）
+
+  # 每周（每7日）
+  per_week:
+    timing: "每7天的日结算后"
+    hooks:
+      - memory_relevance_update         # 记忆相关性刷新
+      - npc_goal_progress_check         # NPC目标进度检查
+
+  # 每月（每30日）
+  per_month:
+    timing: "每30天的日结算后"
+    hooks:
+      - relationship_monthly_decay      # 月度大衰减
+      - memory_compression              # 记忆压缩
+      - economy_monthly_settlement      # 月结算（门派月例等）
+      - world_state_evolution           # 世界状态演化
+      - price_fluctuation               # 价格波动
+
+  # 每季（每90日）
+  per_season:
+    timing: "每90天"
+    hooks:
+      - narrative_attractor_recommendation  # 叙事吸引子推荐
+      - major_event_scheduling              # 大型事件安排
+
+  # 每年（每360日）
+  per_year:
+    timing: "每360天"
+    hooks:
+      - age_increment                   # 年龄增长
+      - npc_lifecycle_check             # NPC生命周期事件
+      - spirit_decline_check            # 灵气衰减检查
+      - cultivation_bottleneck_check    # 修炼瓶颈检查
+```
+
+### 1.3.3 灵气衰退系统（年度结算）
+
+```python
+class SpiritDeclineSystem:
+    """
+    灵气衰退系统
+
+    天元大陆的灵气正在缓慢枯竭。
+    这是一个隐藏的世界规则，影响修炼速度和突破成功率。
+
+    详细数值定义见 01_world.md > hidden_truths > spirit_qi_decline
+    """
+
+    # 基础参数（引用 01_world.md）
+    HISTORICAL_BASELINE = 1.0          # 千年前基准
+    CURRENT_DENSITY = 0.65             # 当今（游戏开始）
+    ANNUAL_DECAY_RATE = 0.002          # 每年衰减0.2%
+
+    # 灵气等级阈值
+    SPIRIT_LEVELS = {
+        5: (0.9, 1.0),     # 繁荣期
+        4: (0.7, 0.9),     # 兴盛期
+        3: (0.5, 0.7),     # 衰退期（当今）
+        2: (0.3, 0.5),     # 荒芜期
+        1: (0.1, 0.3),     # 末法期
+        0: (0.0, 0.1),     # 灭世期
+    }
+
+    # 突破修正系数（按等级）
+    BREAKTHROUGH_MODIFIERS = {
+        5: 1.5,
+        4: 1.2,
+        3: 1.0,  # 当今基准
+        2: 0.7,
+        1: 0.3,
+        0: 0.0,
+    }
+
+    def __init__(self, world_manager: 'WorldManager'):
+        self.world = world_manager
+        self.game_year = 0
+        self.current_density = self.CURRENT_DENSITY
+
+    def annual_settlement(self):
+        """年度灵气衰减结算"""
+        self.game_year += 1
+
+        # 计算衰减
+        decay = self.current_density * self.ANNUAL_DECAY_RATE
+        self.current_density -= decay
+
+        # 检查等级跨越
+        old_level = self._get_spirit_level(self.current_density + decay)
+        new_level = self._get_spirit_level(self.current_density)
+
+        if new_level < old_level:
+            return SpiritDeclineEvent(
+                from_level=old_level,
+                to_level=new_level,
+                message=self._get_decline_message(old_level, new_level)
+            )
+
+        return None
+
+    def _get_spirit_level(self, density: float) -> int:
+        """获取灵气等级"""
+        for level, (min_d, max_d) in self.SPIRIT_LEVELS.items():
+            if min_d <= density < max_d:
+                return level
+        return 0
+
+    def _get_decline_message(self, from_level: int, to_level: int) -> str:
+        """获取衰退描述"""
+        messages = {
+            (4, 3): "修士们隐约感觉到，灵气似乎不如从前充沛了...",
+            (3, 2): "灵脉枯竭的消息从各地传来，宗门开始囤积资源",
+            (2, 1): "末法时代降临，修仙已成奢望",
+            (1, 0): "天地灵气彻底枯竭，仙途断绝",
+        }
+        return messages.get((from_level, to_level), "灵气又衰减了些许")
+
+    def get_location_density(self, location_id: str) -> float:
+        """
+        获取特定地点的灵气密度
+
+        公式: 全局密度 * 区域修正 * 灵脉抗性
+        """
+        location = self.world.get_location(location_id)
+
+        # 区域修正
+        regional_modifier = self._get_regional_modifier(location.region)
+
+        # 灵脉抗性
+        vein_resistance = self._get_vein_resistance(location_id)
+
+        # 实际密度
+        if vein_resistance == 0:  # 秘境，完全隔绝
+            return location.base_spirit_density
+        else:
+            effective_decay = (self.CURRENT_DENSITY - self.current_density) * vein_resistance
+            return location.base_spirit_density * regional_modifier - effective_decay
+
+    def _get_regional_modifier(self, region: str) -> float:
+        """获取区域修正系数"""
+        modifiers = {
+            'east_domain': 1.0,
+            'south_domain': 0.95,
+            'center_domain': 0.85,
+            'north_domain': 0.80,
+            'west_domain': 0.55,
+        }
+        return modifiers.get(region, 0.7)
+
+    def _get_vein_resistance(self, location_id: str) -> float:
+        """获取灵脉抗衰减系数"""
+        # 大宗门灵脉
+        major_veins = ['qingyun_main', 'wanjian_main', 'lingxu_main']
+        if location_id in major_veins:
+            return 0.8  # 只承受80%衰退
+
+        # 秘境
+        secret_realms = ['sword_tomb', 'ancient_cave']
+        if location_id in secret_realms:
+            return 0.0  # 完全隔绝
+
+        return 1.0  # 默认完全承受
+
+    def get_cultivation_modifier(self, location_id: str) -> float:
+        """
+        获取修炼速度修正
+
+        用于计算：实际修炼速度 = 基础速度 * 此修正
+        """
+        density = self.get_location_density(location_id)
+        return density / self.CURRENT_DENSITY  # 以当今为基准
+
+    def get_breakthrough_modifier(self) -> float:
+        """获取突破成功率修正"""
+        level = self._get_spirit_level(self.current_density)
+        return self.BREAKTHROUGH_MODIFIERS.get(level, 1.0)
+
+
+# ============ 灵气衰退影响表 ============
+spirit_decline_effects = """
+| 系统 | 受影响参数 | 计算公式 |
+|------|-----------|----------|
+| 修炼速度 | cultivation_speed | base * location_density / 0.65 |
+| 突破成功率 | breakthrough_rate | base * BREAKTHROUGH_MODIFIER |
+| 资源刷新率 | resource_spawn | base * (global_density / 0.65) |
+| 妖兽活跃度 | beast_activity | base * regional_density |
+| 灵药生长速度 | herb_growth | base * location_density |
+| 阵法稳定性 | formation_stability | base * (location_density ^ 0.5) |
+"""
 ```
 
 ### 1.4 时间的影响
