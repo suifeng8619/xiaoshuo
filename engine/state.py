@@ -27,6 +27,12 @@ class GameState:
             "world": self.data_dir / "world_state.json",
             "story_log": self.data_dir / "story_log.json",
             "relationships": self.data_dir / "relationships.json",
+            # Phase 8 新增
+            "npcs_runtime": self.data_dir / "npcs_runtime.json",
+            "events_state": self.data_dir / "events_state.json",
+            "flags": self.data_dir / "flags.json",
+            "story": self.data_dir / "story.json",
+            "npc_memory": self.data_dir / "npc_memory.json",
         }
 
         # 内存缓存

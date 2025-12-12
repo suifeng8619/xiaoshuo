@@ -12,6 +12,15 @@ from .memory import MemoryManager
 from .ai import AIClient, MockAIClient
 from .time import GameTime
 from .time_system import TimeSystem
+from .event_bus import EventBus, GameEvents
+from .world import WorldManager
+from .characters import CharacterManager
+from .schedule import NPCScheduleEngine
+from .events import EventManager
+from .relationships import RelationshipSystem
+from .story import FlagManager, StoryManager
+from .npc_memory import NPCMemoryManager
+from .validator import AIValidator
 
 
 class Game:
@@ -75,6 +84,37 @@ class Game:
         # 时间系统
         self.time_system: Optional[TimeSystem] = None
         self.world_state: Optional[WorldState] = None
+
+        # === 新增：活世界核心系统 ===
+        # EventBus - 事件总线（所有系统间通信）
+        self.event_bus = EventBus()
+
+        # WorldManager - 地点图管理
+        self.world_manager = WorldManager()
+
+        # CharacterManager - NPC 管理
+        self.char_manager = CharacterManager()
+
+        # NPCScheduleEngine - NPC 日程引擎
+        self.schedule_engine = NPCScheduleEngine(self.char_manager, self.event_bus)
+
+        # EventManager - 事件池管理
+        self.event_manager = EventManager(event_bus=self.event_bus)
+
+        # RelationshipSystem - 关系系统
+        self.relationships = RelationshipSystem(self.event_bus)
+
+        # FlagManager - 标记管理
+        self.flags = FlagManager(self.event_bus)
+
+        # StoryManager - 剧情管理
+        self.story_manager = StoryManager(self.flags, self.event_bus)
+
+        # NPCMemoryManager - NPC 记忆系统
+        self.npc_memory = NPCMemoryManager(self.event_bus)
+
+        # AIValidator - AI 输出验证
+        self.ai_validator = AIValidator()
 
         # 游戏状态
         self.is_running = False
@@ -179,6 +219,12 @@ class Game:
         world_data = self.state.get('world', {})
         self.world_state = WorldState(world_data)
 
+        # 设置玩家起始位置（使用新的 world.yaml starter_location）
+        # 如果玩家位置为空，或在新 WorldManager 中不存在，则重置到 starter_location
+        if (not self.world_state.player_location or
+            not self.world_manager.get_location(self.world_state.player_location)):
+            self.world_state.player_location = self.world_manager.starter_location
+
         # 从世界状态恢复时间
         time_data = self.world_state.current_time
         if time_data and time_data.get('absolute_tick', 0) > 0:
@@ -188,22 +234,131 @@ class Game:
 
         self.time_system = TimeSystem(initial_time=game_time)
 
-        # 注册日结算钩子（后续 Phase 会填充具体逻辑）
+        # 注册时间系统钩子
+        self.time_system.register_hook('slot_changed', self._on_slot_changed)
         self.time_system.register_hook('day_ended', self._on_day_ended)
+        self.time_system.register_hook('month_ended', self._on_month_ended)
+
+        # === 加载各系统存档状态 ===
+        # 加载 NPC 运行时状态
+        npc_state = self.state.get('npcs_runtime', {})
+        if npc_state:
+            self.char_manager.load_state(npc_state)
+
+        # 加载关系数据（若为空则按 NPC 初始值初始化）
+        rel_state = self.state.get('relationships', {})
+        if rel_state:
+            self.relationships.load_state(rel_state)
+        else:
+            # 初始化所有 NPC 的关系
+            for npc in self.char_manager.all_npcs():
+                self.relationships.init_relationship(
+                    npc.id,
+                    npc.initial_relationship.to_dict()
+                )
+
+        # 加载事件状态
+        event_state = self.state.get('events_state', {})
+        if event_state:
+            self.event_manager.load_state(event_state)
+
+        # 加载标记/剧情状态
+        flag_state = self.state.get('flags', {})
+        if flag_state:
+            self.flags.load_state(flag_state)
+
+        story_state = self.state.get('story', {})
+        if story_state:
+            self.story_manager.load_state(story_state)
+
+        # 加载 NPC 记忆
+        memory_state = self.state.get('npc_memory', {})
+        if memory_state:
+            self.npc_memory.load_state(memory_state)
+
+        # === 初始化 AIValidator 白名单 ===
+        self._init_ai_validator()
 
         # 同步世界状态
         self._sync_world_state()
 
+    def _init_ai_validator(self) -> None:
+        """初始化 AI 验证器白名单"""
+        # 注册有效 NPC
+        npcs_dict = {}
+        for npc in self.char_manager.all_npcs():
+            npcs_dict[npc.id] = {
+                "name": npc.name,
+                "nickname": npc.nickname
+            }
+        self.ai_validator.register_valid_npcs(npcs_dict)
+
+        # 注册有效地点
+        location_ids = set(self.world_manager.locations.keys())
+        self.ai_validator.register_valid_locations(location_ids)
+
+        # 注册有效技能（从配置加载）
+        skill_ids = set()
+        for category in ['basic_skills', 'qi_refining_skills', 'foundation_skills',
+                         'passive_skills', 'ultimate_skills']:
+            for skill in self.skills_config.get(category, []):
+                skill_ids.add(skill.get('id', ''))
+        self.ai_validator.register_valid_skills(skill_ids)
+
+        # 物品白名单可以后续补充
+
+    def _on_slot_changed(self, event) -> None:
+        """时段变化钩子 - 驱动 NPC 日程"""
+        new_slot = event.data.get('new_slot')
+        if new_slot:
+            # 执行 NPC 日程
+            results = self.schedule_engine.execute_slot(new_slot)
+            # 可选：记录 NPC 位置变化日志
+            for result in results:
+                if result.old_location != result.new_location:
+                    pass  # 可以添加日志或事件通知
+
     def _on_day_ended(self, event) -> None:
-        """日结算钩子（占位，后续填充）"""
-        # TODO: Phase 3/4/5 填充：关系衰减、NPC日程、事件检查等
-        pass
+        """日结算钩子"""
+        current_day = self.time_system.current_time.day
+        current_month = self.time_system.current_time.month
+
+        # 1. 关系每日衰减
+        self.relationships.apply_daily_decay(current_day)
+
+        # 2. 检查调度事件
+        scheduled = self.event_manager.check_scheduled_events(current_day)
+        for evt in scheduled:
+            # 自动触发调度到期的事件
+            self.event_manager.execute_event(evt, current_day=current_day)
+
+        # 3. 发布日结算事件
+        self.event_bus.publish(
+            GameEvents.DAY_ENDED,
+            data={"day": current_day, "month": current_month},
+            source="game"
+        )
+
+    def _on_month_ended(self, event) -> None:
+        """月结算钩子"""
+        current_day = self.time_system.current_time.day
+
+        # 关系月衰减
+        self.relationships.apply_monthly_decay(current_day)
 
     def _sync_world_state(self) -> None:
-        """同步时间到世界状态并保存"""
+        """同步时间和所有系统状态到存档"""
         if self.time_system and self.world_state:
             self.world_state.current_time = self.time_system.current_time.to_dict()
             self.state.set('world', self.world_state.to_dict())
+
+        # === 同步新系统状态 ===
+        self.state.set('npcs_runtime', self.char_manager.to_dict())
+        self.state.set('relationships', self.relationships.to_dict())
+        self.state.set('events_state', self.event_manager.to_dict())
+        self.state.set('flags', self.flags.to_dict())
+        self.state.set('story', self.story_manager.to_dict())
+        self.state.set('npc_memory', self.npc_memory.to_dict())
 
     def _advance_time(self, ticks: int) -> None:
         """推进时间并同步状态"""
@@ -213,6 +368,113 @@ class Game:
             # 可选：显示时间变化
             if event.days_passed > 0:
                 self._print(f"【时间流逝：{event.days_passed} 日】")
+
+    def _check_and_run_events(self) -> None:
+        """
+        检查并执行事件池
+
+        在每次玩家行动后调用，检查是否有事件可以触发。
+        """
+        current_time = self.time_system.current_time
+        current_slot = current_time.current_slot().value
+        current_day = current_time.day + (current_time.month - 1) * 30
+        current_year = current_time.year + (current_time.month - 1) / 12
+
+        # 获取玩家位置
+        player_location = self.world_state.player_location
+
+        # 获取 NPC 位置
+        npc_locations = {
+            npc.id: npc.current_location
+            for npc in self.char_manager.all_npcs()
+        }
+
+        # 获取关系数据
+        relationships = {}
+        for npc_id, rel in self.relationships.get_all_relationships().items():
+            relationships[npc_id] = rel.to_dict()
+
+        # 检查可触发的事件
+        candidates = self.event_manager.check_triggers(
+            world_state=None,
+            flags=self.flags.get_all_flags(),
+            current_day=current_day,
+            current_year=current_year,
+            current_slot=current_slot,
+            player_location=player_location,
+            npc_locations=npc_locations,
+            relationships=relationships
+        )
+
+        # 选择并执行事件
+        if candidates:
+            selected = self.event_manager.select_event(candidates)
+            if selected:
+                # 执行事件
+                result = self.event_manager.execute_event(
+                    selected,
+                    current_day=current_day
+                )
+
+                # 显示事件叙事
+                narrative = selected.narrative
+                if narrative.get('intro'):
+                    self._print(f"\n{narrative['intro']}")
+
+                # 应用事件效果
+                self._apply_event_effects(result, selected)
+
+    def _apply_event_effects(self, result: dict, event) -> None:
+        """
+        应用事件效果
+
+        Args:
+            result: 事件执行结果
+            event: 事件对象
+        """
+        effects = result.get("effects", {})
+        current_day = self.time_system.current_time.day
+
+        # 设置标记
+        for flag in effects.get("set_flags", []):
+            self.flags.set_flag(flag, f"event:{event.id}")
+
+        # 清除标记
+        for flag in effects.get("clear_flags", []):
+            self.flags.clear_flag(flag, f"event:{event.id}")
+
+        # 关系变化
+        rel_changes = effects.get("relationship", {})
+        for npc_id, changes in rel_changes.items():
+            self.relationships.apply_changes(
+                npc_id, changes,
+                reason=f"event:{event.id}",
+                current_day=current_day
+            )
+            # 显示关系变化提示
+            for dim, delta in changes.items():
+                if delta > 0:
+                    self._print(f"『与{npc_id}的{dim}提升了』")
+                elif delta < 0:
+                    self._print(f"『与{npc_id}的{dim}下降了』")
+
+        # 调度后续事件
+        followup = effects.get("schedule_followup", {})
+        if followup.get("event_id") and followup.get("delay_days"):
+            trigger_day = current_day + followup["delay_days"]
+            self.event_manager.schedule_event(followup["event_id"], trigger_day)
+
+        # 添加线索
+        clue = effects.get("add_clue")
+        if clue:
+            self.story_manager.discover_clue(clue, current_day)
+
+        # 玩家效果（经验、货币等）
+        player_effects = effects.get("player", {})
+        if player_effects.get("exp"):
+            exp_gained = player_effects["exp"]
+            self.character.add_exp(exp_gained)
+            self._print(f"『获得 {exp_gained} 点修为』")
 
     def _game_loop(self) -> None:
         """主游戏循环"""
@@ -278,32 +540,51 @@ class Game:
 
     def cmd_look(self, args: list) -> None:
         """查看周围环境"""
-        world_state = self.state.get('world', {})
-        current_scene = world_state.get('current_scene', {})
+        # === 优先使用新的 WorldManager ===
+        player_location = self.world_state.player_location
+        location = self.world_manager.get_location(player_location)
 
-        if not current_scene:
-            # 如果没有场景数据，生成一个
-            current_scene = self._generate_default_scene()
+        if location:
+            # 使用 WorldManager 数据
+            self._print(f"\n【{location.name}】")
+            if location.description:
+                self._print(location.description)
 
-        # 生成场景描述
-        description = self.ai.generate_scene_description(current_scene)
-        self._print(f"\n{description}")
+            # 显示相邻地点（使用 world.yaml 中的连接）
+            adjacent = self.world_manager.get_adjacent_with_names(player_location)
+            if adjacent:
+                exits_str = ', '.join([f"{name}({time}时辰)" for _, name, time in adjacent])
+                self._print(f"可前往：{exits_str}")
 
-        # 显示可互动对象
-        if current_scene.get('features'):
-            self._print(f"\n你注意到：{', '.join(current_scene['features'])}")
+            # 显示当前位置的 NPC（使用 CharacterManager）
+            present_npcs = self.char_manager.get_npcs_at_location(player_location)
+            if present_npcs:
+                npc_names = [npc.get_display_name() for npc in present_npcs]
+                self._print(f"这里有：{', '.join(npc_names)}")
+        else:
+            # 降级到旧逻辑
+            world_state = self.state.get('world', {})
+            current_scene = world_state.get('current_scene', {})
 
-        if current_scene.get('exits'):
-            self._print(f"可前往：{', '.join(current_scene['exits'])}")
+            if not current_scene:
+                current_scene = self._generate_default_scene()
 
-        # 显示NPC（只显示当前场景的NPC）
-        npcs_data = self.state.get('npcs', {})
-        char_scene = self.character.data['status']['current_scene']
-        present_npcs = [n for n in npcs_data.get('npcs', {}).values()
-                       if n.get('location') == char_scene and n.get('is_alive', True)]
-        if present_npcs:
-            npc_names = [n['name'] for n in present_npcs]
-            self._print(f"这里有：{', '.join(npc_names)}")
+            description = self.ai.generate_scene_description(current_scene)
+            self._print(f"\n{description}")
+
+            if current_scene.get('features'):
+                self._print(f"\n你注意到：{', '.join(current_scene['features'])}")
+
+            if current_scene.get('exits'):
+                self._print(f"可前往：{', '.join(current_scene['exits'])}")
+
+            npcs_data = self.state.get('npcs', {})
+            char_scene = self.character.data['status']['current_scene']
+            present_npcs = [n for n in npcs_data.get('npcs', {}).values()
+                           if n.get('location') == char_scene and n.get('is_alive', True)]
+            if present_npcs:
+                npc_names = [n['name'] for n in present_npcs]
+                self._print(f"这里有：{', '.join(npc_names)}")
 
     def cmd_inventory(self, args: list) -> None:
         """查看物品栏"""
@@ -340,7 +621,7 @@ class Game:
     def cmd_move(self, args: list) -> None:
         """移动到其他位置"""
         if not args:
-            self._print("\n请指定目的地。用法: move <地点>")
+            self._print("\n请指定目的地。用法: move <地点名或ID>")
             return
 
         # 战斗中不能移动
@@ -348,34 +629,80 @@ class Game:
             self._print("\n战斗中无法移动！")
             return
 
-        destination = " ".join(args)
+        destination_input = " ".join(args)
 
-        # 检查是否可以移动
-        world_state = self.state.get('world', {})
-        current_scene = world_state.get('current_scene', {})
-        exits = current_scene.get('exits', [])
+        # === 优先使用 WorldManager ===
+        current_location = self.world_state.player_location
+        current_loc = self.world_manager.get_location(current_location)
 
-        if destination not in exits:
-            self._print(f"\n无法前往 {destination}。可前往：{', '.join(exits)}")
-            return
+        if current_loc:
+            # 新逻辑：通过 WorldManager 处理移动
+            # 尝试按名称或 ID 查找目的地
+            dest_loc = self.world_manager.get_location(destination_input)
+            if not dest_loc:
+                dest_loc = self.world_manager.get_location_by_name(destination_input)
 
-        # 执行移动
-        self.character.data['status']['current_scene'] = destination
-        self.state.set('character', self.character.to_dict())
+            if not dest_loc:
+                adjacent = self.world_manager.get_adjacent_with_names(current_location)
+                exits_str = ', '.join([name for _, name, _ in adjacent])
+                self._print(f"\n找不到地点 {destination_input}。可前往：{exits_str}")
+                return
 
-        # 更新场景
-        new_scene = self._get_or_create_scene(destination)
-        world_state['current_scene'] = new_scene
-        self.state.set('world', world_state)
+            # 检查是否可达（直接相邻）
+            if not self.world_manager.can_travel(current_location, dest_loc.id):
+                adjacent = self.world_manager.get_adjacent_with_names(current_location)
+                exits_str = ', '.join([name for _, name, _ in adjacent])
+                self._print(f"\n无法直接前往 {dest_loc.name}。可前往：{exits_str}")
+                return
 
-        self._print(f"\n你来到了 {destination}。")
+            # 获取旅行时间并消耗时辰
+            travel_time = self.world_manager.get_travel_time(current_location, dest_loc.id)
+            if travel_time > 0:
+                self._advance_time(travel_time)
 
-        # 检查随机遇敌
-        monsters = self._check_random_encounter(destination)
-        if monsters:
-            self._trigger_encounter(monsters)
+            # 更新玩家位置
+            self.world_state.player_location = dest_loc.id
+            self.character.data['status']['current_scene'] = dest_loc.id
+            self.state.set('character', self.character.to_dict())
+            self._sync_world_state()
+
+            self._print(f"\n你来到了【{dest_loc.name}】。")
+            if travel_time > 0:
+                self._print(f"（耗时 {travel_time} 时辰）")
+
+            # 检查事件触发
+            self._check_and_run_events()
+
+            # 检查随机遇敌
+            monsters = self._check_random_encounter(dest_loc.id)
+            if monsters:
+                self._trigger_encounter(monsters)
+            else:
+                self.cmd_look([])
         else:
-            self.cmd_look([])
+            # 降级到旧逻辑
+            world_state = self.state.get('world', {})
+            current_scene = world_state.get('current_scene', {})
+            exits = current_scene.get('exits', [])
+
+            if destination_input not in exits:
+                self._print(f"\n无法前往 {destination_input}。可前往：{', '.join(exits)}")
+                return
+
+            self.character.data['status']['current_scene'] = destination_input
+            self.state.set('character', self.character.to_dict())
+
+            new_scene = self._get_or_create_scene(destination_input)
+            world_state['current_scene'] = new_scene
+            self.state.set('world', world_state)
+
+            self._print(f"\n你来到了 {destination_input}。")
+
+            monsters = self._check_random_encounter(destination_input)
+            if monsters:
+                self._trigger_encounter(monsters)
+            else:
+                self.cmd_look([])
 
     def cmd_talk(self, args: list) -> None:
         """与NPC对话"""
@@ -387,34 +714,101 @@ class Game:
         npc_name = args[0]
         dialogue = " ".join(args[1:]) if len(args) > 1 else "你好"
 
-        # 查找NPC
-        npcs_data = self.state.get('npcs', {})
-        npc = None
-        for n in npcs_data.get('npcs', {}).values():
-            if n['name'] == npc_name:
-                npc = n
+        # === 优先使用 CharacterManager ===
+        player_location = self.world_state.player_location
+        present_npcs = self.char_manager.get_npcs_at_location(player_location)
+
+        npc_data = None
+        for npc in present_npcs:
+            if npc.name == npc_name or npc.nickname == npc_name:
+                npc_data = npc
                 break
 
-        if not npc:
-            self._print(f"\n这里没有叫 {npc_name} 的人。")
-            return
+        if npc_data:
+            # 使用新系统
+            npc_id = npc_data.id
+            display_name = npc_data.get_display_name()
 
-        # 构建上下文并生成对话
-        context = self.memory.build_context(focus_area='dialogue')
-        response = self.ai.generate_dialogue(context, npc, dialogue)
+            # 构建上下文（整合关系和记忆）
+            npc_context = self.char_manager.build_npc_context(npc_id)
+            rel_context = self.relationships.build_context(npc_id)
+            memory_context = self.npc_memory.build_context(npc_id)
 
-        self._print(f"\n你对{npc_name}说：「{dialogue}」")
-        self._print(f"{npc_name}回应道：「{response}」")
+            # 合并上下文
+            full_context = self.memory.build_context(focus_area='dialogue')
+            full_context['npc'] = npc_context
+            full_context['relationship'] = rel_context
+            full_context['npc_memory'] = memory_context
 
-        # 记录对话
-        story_log = StoryLog(self.state.get('story_log', {}))
-        story_log.add_entry(f"玩家对{npc_name}说：「{dialogue}」", "dialogue")
-        story_log.add_entry(f"{npc_name}：「{response}」", "dialogue")
-        self.state.set('story_log', story_log.to_dict())
+            # 生成对话
+            response = self.ai.generate_dialogue(full_context, npc_context, dialogue)
 
-        # 更新任务进度（对话类）
-        npc_id = npc.get('id', '')
-        self._update_quest_progress('talk', npc_id)
+            # AI 输出验证（T8.6）
+            validation = self.ai_validator.validate_narrative(response)
+            if not validation.is_valid:
+                # 使用清理后的内容或降级
+                response = validation.sanitized_content or self.ai_validator.get_fallback_narrative()
+                for error in validation.errors:
+                    print(f"[Validation] {error.code}: {error.message}")
+
+            self._print(f"\n你对{display_name}说：「{dialogue}」")
+            self._print(f"{display_name}回应道：「{response}」")
+
+            # 记录互动（重置未互动天数）
+            self.relationships.record_interaction(npc_id)
+
+            # 添加 NPC 记忆
+            current_time = self.time_system.current_time
+            current_day = current_time.day + (current_time.month - 1) * 30
+            self.npc_memory.add_memory(
+                npc_id=npc_id,
+                content=f"玩家说：「{dialogue}」",
+                emotion="neutral",
+                importance=3,
+                game_day=current_day,
+                location=player_location
+            )
+
+            # 记录对话到剧情日志
+            story_log = StoryLog(self.state.get('story_log', {}))
+            story_log.add_entry(f"玩家对{display_name}说：「{dialogue}」", "dialogue")
+            story_log.add_entry(f"{display_name}：「{response}」", "dialogue")
+            self.state.set('story_log', story_log.to_dict())
+
+            # 更新任务进度
+            self._update_quest_progress('talk', npc_id)
+
+            # 检查事件触发
+            self._check_and_run_events()
+
+            # 同步状态
+            self._sync_world_state()
+        else:
+            # 降级到旧逻辑
+            npcs_data = self.state.get('npcs', {})
+            npc = None
+            for n in npcs_data.get('npcs', {}).values():
+                if n['name'] == npc_name:
+                    npc = n
+                    break
+
+            if not npc:
+                self._print(f"\n这里没有叫 {npc_name} 的人。")
+                return
+
+            context = self.memory.build_context(focus_area='dialogue')
+            response = self.ai.generate_dialogue(context, npc, dialogue)
+
+            self._print(f"\n你对{npc_name}说：「{dialogue}」")
+            self._print(f"{npc_name}回应道：「{response}」")
+
+            story_log = StoryLog(self.state.get('story_log', {}))
+            story_log.add_entry(f"玩家对{npc_name}说：「{dialogue}」", "dialogue")
+            story_log.add_entry(f"{npc_name}：「{response}」", "dialogue")
+            self.state.set('story_log', story_log.to_dict())
+
+            npc_id = npc.get('id', '')
+            self._update_quest_progress('talk', npc_id)
 
     def cmd_attack(self, args: list) -> None:
         """攻击目标"""
@@ -1657,10 +2051,14 @@ class Game:
 
         # 死亡惩罚
         # 1. 损失一定比例的经验（10%，但不会掉级）
-        current_exp = self.character.data.get('exp', 0)
+        exp_data = self.character.data.get('exp', {})
+        current_exp = exp_data.get('current', 0) if isinstance(exp_data, dict) else exp_data
         exp_lost = int(current_exp * 0.1)
         if exp_lost > 0:
-            self.character.data['exp'] = max(0, current_exp - exp_lost)
+            if isinstance(exp_data, dict):
+                exp_data['current'] = max(0, current_exp - exp_lost)
+            else:
+                self.character.data['exp'] = max(0, current_exp - exp_lost)
             self._print(f"『损失了 {exp_lost} 点修为』")
 
         # 2. 损失一定比例的金币（20%）
@@ -1767,17 +2165,9 @@ class Game:
         }
         self.state.set('inventory', initial_inventory)
 
-        # 初始化世界状态
+        # 初始化世界状态（从配置生成，保持字段与规则一致）
         initial_world = {
-            "current_scene": {
-                "name": "新手村",
-                "type": "settlement",
-                "description": "一个宁静的小村庄，灵气稀薄，适合凡人居住。",
-                "features": ["客栈", "杂货铺", "村长家", "练武场"],
-                "exits": ["村外小路", "后山"],
-                "atmosphere": "宁静祥和",
-                "danger_level": "安全"
-            }
+            "current_scene": self._get_or_create_scene("新手村")
         }
         self.state.set('world', initial_world)
 
