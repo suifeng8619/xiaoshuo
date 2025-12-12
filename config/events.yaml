@@ -1,0 +1,472 @@
+# 事件池配置
+# 参考: docs/design/03_systems.md, docs/design/04_story.md
+
+# ============ 事件层级定义 ============
+# daily_pool: 日常事件（高频低冲击）
+# opportunity_pool: 机缘事件（中频中冲击）
+# critical_pool: 关键事件（低频高冲击）
+
+events:
+  # ============ 日常事件 (Daily) ============
+
+  # 日常事件1: 阿檀送饭
+  daily_atan_meal:
+    id: daily_atan_meal
+    name: 阿檀送饭
+    tier: daily
+    storyline: bond  # 关联阿檀线
+    repeatable: true  # 日常事件可重复
+
+    window:
+      time_slots: [morning, evening]  # 只在早晚出现
+      locations: [player_cave]
+
+    conditions:
+      npc_alive: [atan]
+      npc_at_location:
+        atan: player_cave  # 阿檀必须在玩家洞府
+      flags_absent:
+        - atan_angry  # 阿檀没有在生气
+
+    effects:
+      relationship:
+        atan:
+          affection: 1
+          trust: 1
+
+    cooldown: 1  # 冷却1天
+
+    narrative:
+      opening: |
+        阿檀端着食盒轻轻推门进来。
+        「公子，该用膳了。」
+      ai_tags: [温馨, 日常, 关心]
+
+  # 日常事件2: 修炼感悟
+  daily_cultivation_insight:
+    id: daily_cultivation_insight
+    name: 修炼小悟
+    tier: daily
+    repeatable: true
+
+    window:
+      time_slots: [morning, afternoon]
+      locations: [player_cave, yunxia_peak, practice_ground]
+
+    conditions:
+      player:
+        activity: cultivate
+      random_chance: 0.15  # 15%概率触发
+
+    effects:
+      player:
+        exp_bonus: 10
+
+    cooldown: 3  # 冷却3天
+
+    narrative:
+      opening: |
+        修炼中，你忽然有所领悟。
+        一丝玄妙的感觉转瞬即逝，但留下了些许印记。
+      ai_tags: [修炼, 感悟, 进步]
+
+  # 日常事件3: 灵气异常（真相线线索）
+  daily_qi_anomaly:
+    id: daily_qi_anomaly
+    name: 灵气稀薄
+    tier: daily
+    storyline: truth
+    repeatable: true
+
+    window:
+      time_slots: [morning, afternoon, evening, night]
+      locations: [back_mountain, back_mountain_stream]
+
+    conditions:
+      player:
+        realm_min: 3  # 至少练气三层才能感知
+      flags_absent:
+        - truth_qi_discovered  # 第一次发现后不再触发
+      random_chance: 0.2
+
+    effects:
+      set_flags:
+        - truth_qi_hint
+      add_clue:
+        storyline: truth
+        clue_id: qi_decline
+        weight: 1
+
+    narrative:
+      hint: 你感觉这里的灵气...好像比以前淡了。
+      ai_tags: [疑惑, 异常, 线索]
+
+  # ============ 机缘事件 (Opportunity) ============
+
+  # 机缘事件1: 心意相通（阿檀线推进）
+  opportunity_hearts_connect:
+    id: opportunity_hearts_connect
+    name: 无言的默契
+    tier: opportunity
+    storyline: bond
+    repeatable: false
+
+    window:
+      time_slots: [evening, night]
+      locations: [back_mountain_stream, player_cave]
+
+    conditions:
+      npc_alive: [atan]
+      npc_at_location:
+        atan: same_as_player  # 阿檀和玩家在同一地点
+      relationship:
+        atan:
+          affection: ">=75"
+          trust: ">=60"
+      flags_absent:
+        - bond_hearts_connected
+
+    effects:
+      set_flags:
+        - bond_hearts_connected
+      relationship:
+        atan:
+          affection: 10
+          trust: 5
+
+    narrative:
+      opening: |
+        月光下，你们并肩而坐。
+        谁也没说话，但好像什么都说了。
+      ai_tags: [温情, 默契, 情感升华]
+      ai_constraints:
+        - 不要太直白，让情感自然流露
+        - 保持含蓄的美感
+
+  # 机缘事件2: 师父指点
+  opportunity_master_guidance:
+    id: opportunity_master_guidance
+    name: 师父点拨
+    tier: opportunity
+    repeatable: true
+
+    window:
+      time_slots: [afternoon]
+      locations: [yunxia_peak, practice_ground]
+
+    conditions:
+      npc_alive: [master_yunyin]
+      npc_at_location:
+        master_yunyin: same_as_player
+      relationship:
+        master_yunyin:
+          trust: ">=40"
+      flags_absent:
+        - master_busy
+      random_chance: 0.3
+
+    effects:
+      player:
+        exp_bonus: 50
+      relationship:
+        master_yunyin:
+          respect: 2
+
+    cooldown: 7  # 冷却7天
+
+    narrative:
+      opening: |
+        师父看了看你的修炼，微微点头。
+        「这一处，你悟偏了。」
+        话不多，但每一句都直指要害。
+      ai_tags: [指导, 严厉, 关心]
+
+  # 机缘事件3: 师父往事（真相线）
+  opportunity_master_past:
+    id: opportunity_master_past
+    name: 尘封的过去
+    tier: opportunity
+    storyline: truth
+    repeatable: false
+
+    window:
+      time_slots: [evening, night]
+      locations: [yunxia_peak]
+
+    conditions:
+      npc_alive: [master_yunyin]
+      npc_at_location:
+        master_yunyin: yunxia_peak
+      relationship:
+        master_yunyin:
+          trust: ">=70"
+      flags_absent:
+        - truth_master_past_known
+
+    effects:
+      set_flags:
+        - truth_master_past_known
+      add_clue:
+        storyline: truth
+        clue_id: master_secret
+        weight: 2
+      relationship:
+        master_yunyin:
+          trust: 5
+
+    narrative:
+      hint: |
+        师父喝了点酒，难得地说起往事。
+        「很多年前，有个人为我挡了一剑...」
+      ai_tags: [往事, 感伤, 秘密]
+
+  # ============ 关键事件 (Critical) ============
+
+  # 关键事件1: 灵根发现（阿檀线转折）
+  critical_atan_linggen:
+    id: critical_atan_linggen
+    name: 意外的天赋
+    tier: critical
+    storyline: bond
+    interrupt: false  # 不强制打断
+    repeatable: false
+
+    window:
+      time:
+        year_min: 0.5
+        year_max: 3
+
+    conditions:
+      npc_alive: [atan]
+      flags_absent:
+        - atan_linggen_tested
+
+    triggers:
+      - type: time_window
+        check_interval: weekly
+        base_chance: 0.1
+      - type: flag_set
+        flag: sect_test_day
+
+    effects:
+      set_flags:
+        - atan_has_linggen
+        - atan_linggen_tested
+
+    choices:
+      - id: go_lingxu
+        label: 让她去灵虚宗
+        description: 对她的未来好，但要分开
+        effects:
+          set_flags: [atan_to_lingxu]
+          relationship:
+            atan:
+              affection: -5
+              respect: 10
+
+      - id: stay_qingyun
+        label: 让她留在青云门
+        description: 在一起，但修炼受限
+        effects:
+          set_flags: [atan_stays_qingyun]
+          relationship:
+            atan:
+              affection: 10
+              dependency: 5
+
+      - id: her_choice
+        label: 让她自己决定
+        description: 尊重她的选择
+        effects:
+          npc_decision:
+            npc: atan
+            factors:
+              - "affection > 70 → stay (0.7)"
+              - "default → go (0.5)"
+
+    narrative:
+      opening: |
+        你发现阿檀似乎有修炼天赋。
+        这意味着她可以有不一样的未来...
+      ai_tags: [选择, 命运, 转折点]
+      ai_constraints:
+        - 不要替玩家做决定
+        - 呈现每个选择的代价
+
+  # 关键事件2: 玄影初遇（仇人线启动）
+  critical_xuanying_first:
+    id: critical_xuanying_first
+    name: 神秘黑衣人
+    tier: critical
+    storyline: revenge
+    interrupt: false
+    repeatable: false
+
+    window:
+      time:
+        year_min: 1
+        year_max: 8
+      locations: [back_mountain]
+
+    conditions:
+      player:
+        realm_min: 3  # 练气三层以上
+      flags_absent:
+        - revenge_xuanying_met
+
+    triggers:
+      - type: location_enter
+        locations: [back_mountain]
+        chance: 0.15
+      - type: time_window
+        check_interval: monthly
+        base_chance: 0.05
+
+    effects:
+      set_flags:
+        - revenge_xuanying_met
+      schedule_followup:
+        event_id: critical_xuanying_second
+        delay_min: 180  # 最少180天后
+        delay_max: 540  # 最多540天后
+
+    expiry:
+      year: 8
+      consequence:
+        trigger_event: critical_xuanying_initiative
+        description: 错过初遇，玄影主动现身
+
+    narrative:
+      opening: |
+        你在后山行走时，听到前方传来打斗声。
+        循声望去，只见一个黑衣人正与数人缠斗。
+        那人身法诡异，面容却带着淡淡的笑意。
+      ai_tags: [悬念, 危险, 神秘]
+      ai_constraints:
+        - 不要透露玄影真实身份
+        - 保持悬念感
+
+  # 关键事件3: 阿檀遇险（阿檀线危机）
+  critical_atan_danger:
+    id: critical_atan_danger
+    name: 危机
+    tier: critical
+    storyline: bond
+    interrupt: true  # 强制打断当前行动
+    repeatable: false
+
+    window:
+      time:
+        year_min: 5
+        year_max: 20
+
+    conditions:
+      npc_alive: [atan]
+      storyline_phase:
+        bond: ">=1"  # 阿檀线至少phase 1
+      flags_absent:
+        - atan_crisis_resolved
+
+    triggers:
+      - type: storyline_progress
+        storyline: revenge
+        phase: 2  # 仇人开始报复时
+      - type: random
+        yearly_chance: 0.15
+        condition: "atan_realm < player_realm - 2"
+
+    effects:
+      set_flags:
+        - atan_in_danger
+      schedule_followup:
+        event_id: critical_atan_rescue
+        delay: 7
+        expiry: 30  # 30天内必须救
+
+    expiry:
+      day: 30
+      consequence:
+        set_flags: [atan_permanently_injured]
+        relationship:
+          atan:
+            trust: -30
+        description: 营救失败，阿檀受到伤害
+
+    narrative:
+      opening: |
+        消息传来，阿檀出事了。
+        你的心猛地一沉。
+      ai_tags: [紧急, 危机, 牵挂]
+      ai_constraints:
+        - 制造紧迫感
+        - 不要淡化危机
+
+# ============ 剧情阶段定义 ============
+story_phases:
+  bond:
+    phase_0_childhood:
+      name: 青梅竹马
+      description: 相依为命，情感纯粹
+      advance_conditions:
+        - flag: atan_linggen_tested
+        - relationship.atan.affection: ">=60"
+
+    phase_1_budding:
+      name: 情愫暗生
+      description: 开始有超越友情的东西
+      advance_conditions:
+        - flag: bond_hearts_connected
+        - relationship.atan.affection: ">=80"
+
+    phase_2_crisis:
+      name: 危机考验
+      description: 阿檀遇险
+      advance_conditions:
+        - flag: atan_crisis_resolved
+
+  revenge:
+    phase_0_dormant:
+      name: 潜伏
+      description: 玄影在暗处
+      advance_conditions:
+        - flag: revenge_xuanying_met
+
+    phase_1_aware:
+      name: 显露
+      description: 玩家知道仇人存在
+      advance_conditions:
+        - flag: revenge_truth_revealed
+
+    phase_2_conflict:
+      name: 冲突
+      description: 双方有过交手
+      advance_conditions:
+        - flag: master_injured
+
+  truth:
+    phase_0_ignorant:
+      name: 无知
+      description: 不知道世界有更深的秘密
+      advance_conditions:
+        - clue_count.truth: ">=1"
+
+    phase_1_suspicious:
+      name: 疑惑
+      description: 开始怀疑世界不对劲
+      advance_conditions:
+        - clue_count.truth: ">=3"
+
+# ============ 线索定义 ============
+clues:
+  truth:
+    qi_decline:
+      id: qi_decline
+      name: 灵气衰退
+      description: 某些区域灵气变薄
+      weight: 1
+
+    master_secret:
+      id: master_secret
+      name: 师父的秘密
+      description: 师父似乎知道什么
+      weight: 2
