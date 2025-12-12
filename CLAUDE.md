@@ -14,15 +14,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # 安装依赖
 pip install -r requirements.txt
 
-# 运行混合AI原型（三大顶级模型）
-python3 prototype/atan_hybrid.py
+# 运行混合AI原型（实验区，三大模型路由）
+python -m prototype.atan_hybrid
+# 需要设置环境变量：export EVOLINK_API_KEY=your_key
 
-# 运行单AI原型
-python3 prototype/atan.py
+# 运行单AI原型（实验区，使用 Anthropic Claude）
+python -m prototype.atan
+# 需要设置环境变量：export ANTHROPIC_API_KEY=your_key
 
-# 运行主游戏框架
-python3 run.py
-python3 run.py --mock  # 模拟模式，不消耗API
+# 运行主游戏框架（主线，单 Claude）
+python run.py
+python run.py --mock  # 模拟模式，不消耗API
 ```
 
 ## 混合AI引擎（evolink.ai）
