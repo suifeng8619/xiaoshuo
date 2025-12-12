@@ -561,11 +561,6 @@ class Game:
         player_location = self.world_state.player_location
         location = self.world_manager.get_location(player_location)
 
-        # DEBUG: 临时调试输出，定位降级原因
-        if not location:
-            self._print(f"[DEBUG] player_location='{player_location}', "
-                       f"available={list(self.world_manager.locations.keys())}")
-
         if location:
             # 使用 WorldManager 数据
             self._print(f"\n【{location.name}】")

@@ -177,7 +177,7 @@ class MemoryManager:
 经验：{char_data.get('exp', {}).get('current', 0)}/{char_data.get('exp', {}).get('to_next_level', 0)}
 可用属性点：{char_data.get('attribute_points', 0)}
 
-位置：{status.get('current_location', '未知')} - {status.get('current_scene', '未知')}
+位置：{status.get('current_scene', '未知')}
 状态：{'战斗中' if status.get('is_in_combat') else '修炼中' if status.get('is_cultivating') else '正常'}
 
 装备：{equip_str}
