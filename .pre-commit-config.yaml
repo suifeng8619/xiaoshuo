@@ -1,0 +1,13 @@
+# pre-commit 配置
+# 安装：pip install pre-commit && pre-commit install
+
+repos:
+  # 本地自定义 hook：防止 API 密钥泄露
+  - repo: local
+    hooks:
+      - id: no-secrets
+        name: 检查 API 密钥泄露
+        entry: bash -c 'if git diff --cached --diff-filter=ACM | grep "^+" | grep -v "^+++" | grep -E "sk-[A-Za-z0-9]{20,}" > /dev/null 2>&1; then echo "❌ 检测到可能的 API 密钥！" && exit 1; fi'
+        language: system
+        pass_filenames: false
+        always_run: true

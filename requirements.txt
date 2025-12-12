@@ -4,3 +4,6 @@ pyyaml>=6.0
 
 # AI SDK（主线使用）
 anthropic>=0.18.0
+
+# 开发工具（可选）
+pre-commit>=3.0.0  # pip install pre-commit && pre-commit install
