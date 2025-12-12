@@ -199,10 +199,18 @@ class Game:
         # 检查是否有存档
         char_data = self.state.get('character')
         is_new_game = False
+
         if char_data:
-            self._print(f"\n欢迎回来，{char_data.get('name', '修士')}！")
-            self.character = Character(char_data)
+            # 有存档，让玩家选择
+            choice = self._show_save_selection(char_data)
+            if choice == 'continue':
+                self.character = Character(char_data)
+            elif choice == 'new':
+                self._clear_save_data()
+                self._create_character()
+                is_new_game = True
         else:
+            # 无存档，直接创建
             self._create_character()
             is_new_game = True
 
@@ -213,8 +221,8 @@ class Game:
         if is_new_game:
             self._show_opening_situation()
         else:
-            # 老存档：显示当前状态
-            self.cmd_status([])
+            # 老存档：显示回顾和当前状态
+            self._show_save_recap()
 
         # 主循环
         self._game_loop()
@@ -2325,6 +2333,126 @@ class Game:
   · 输入 status 查看你的修炼面板（金手指）
   · 输入 look   查看周围环境
   · 输入 help   查看所有可用指令
+""")
+
+    def _show_save_selection(self, char_data: dict) -> str:
+        """显示存档选择界面，返回 'continue' 或 'new'"""
+        name = char_data.get('name', '无名')
+        realm = char_data.get('realm', {})
+        realm_name = realm.get('name', '?') if isinstance(realm, dict) else str(realm)
+        sub_realm = realm.get('sub_realm', '') if isinstance(realm, dict) else ''
+
+        # 获取游戏时间
+        world_data = self.state.get('world', {}) or {}
+        time_data = world_data.get('current_time', {})
+        if time_data:
+            year = time_data.get('year', 1)
+            month = time_data.get('month', 1)
+            day = time_data.get('day', 1)
+            time_str = f"修仙历{year}年{month}月{day}日"
+        else:
+            time_str = "修仙历1年1月1日"
+
+        # 获取位置
+        status = char_data.get('status', {})
+        location = status.get('current_scene', '未知')
+
+        self._print(f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+【发现存档】
+
+  角色：{name}
+  境界：{realm_name} {sub_realm}
+  位置：{location}
+  时间：{time_str}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+""")
+        while True:
+            choice = input("请选择：(1.继续游戏 / 2.新的开始): ").strip()
+            if choice == '1':
+                return 'continue'
+            elif choice == '2':
+                confirm = input("确定要放弃当前存档，重新开始吗？(y/n): ").strip().lower()
+                if confirm == 'y':
+                    return 'new'
+            else:
+                self._print("请输入 1 或 2。")
+
+    def _clear_save_data(self) -> None:
+        """清除存档数据"""
+        # 清除所有状态
+        keys_to_clear = [
+            'character', 'world', 'inventory', 'quests', 'story_log',
+            'relationships', 'npcs_runtime', 'events_state', 'flags',
+            'story', 'npc_memory'
+        ]
+        for key in keys_to_clear:
+            self.state.set(key, {})
+        self.state.save_all()
+
+    def _show_save_recap(self) -> None:
+        """显示存档回顾 - 继续游戏时调用"""
+        # 获取角色信息
+        char_data = self.state.get('character', {})
+        name = char_data.get('name', '修士')
+
+        # 获取当前位置和时间
+        location_id = self.world_state.player_location
+        location = self.world_manager.get_location(location_id)
+        location_name = location.name if location else "未知之地"
+
+        current_time = self.time_system.current_time
+        slot_names = {
+            'chen': '清晨', 'wu': '正午', 'shen': '午后',
+            'xu': '黄昏', 'zi': '深夜'
+        }
+        time_slot = current_time.current_slot()
+        time_desc = slot_names.get(time_slot.value, '某时')
+        date_desc = f"修仙历{current_time.year}年{current_time.month}月{current_time.day}日"
+
+        # 获取最近的剧情记录
+        story_log = StoryLog(self.state.get('story_log', {}))
+        recent_entries = story_log.data.get('entries', [])[-10:]  # 最近10条
+
+        self._print(f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+【欢迎回来，{name}】
+
+  当前时间：{date_desc} · {time_desc}
+  当前位置：{location_name}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+""")
+
+        # 显示最近的剧情
+        if recent_entries:
+            self._print("【最近发生的事】\n")
+            for entry in recent_entries[-5:]:  # 只显示最近5条
+                content = entry.get('content', '')
+                # 截断过长的内容
+                if len(content) > 80:
+                    content = content[:77] + "..."
+                self._print(f"  {content}")
+            self._print("")
+
+        # 显示当前状态摘要
+        self._print("【当前状态】")
+        self.cmd_status([])
+
+        # 显示附近的NPC
+        present_npcs = self.char_manager.get_npcs_at_location(location_id)
+        if present_npcs:
+            npc_names = [npc.get_display_name() for npc in present_npcs]
+            self._print(f"\n附近有：{', '.join(npc_names)}")
+
+        self._print("""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+『提示』输入 help 查看所有可用指令
+
 """)
 
     def _show_opening_situation(self) -> None:
