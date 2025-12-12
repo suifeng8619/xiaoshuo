@@ -475,7 +475,9 @@ class EmotionPrototype:
     def __init__(self):
         self.ai: Optional[AtanAI] = None
         self.current_scene: str = "reunion"
-        self.save_path = Path("prototype_save.json")
+        # 存档保存在脚本所在目录，而不是工作目录
+        self.save_path = Path(__file__).parent / "saves" / "atan_save.json"
+        self.save_path.parent.mkdir(exist_ok=True)
 
     def start(self):
         """启动原型"""

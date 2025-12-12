@@ -27,7 +27,11 @@ from enum import Enum
 # ============ 配置 ============
 
 # evolink.ai API配置
-API_KEY = os.getenv("EVOLINK_API_KEY", "sk-Z4apIc8CO8sxw39teQ1OiKt9qjRKeWNpIM9qeosIgsF65NTn")
+# 必须通过环境变量设置 EVOLINK_API_KEY，不提供默认值
+API_KEY = os.getenv("EVOLINK_API_KEY", "")
+if not API_KEY:
+    print("警告：未设置 EVOLINK_API_KEY 环境变量，AI功能将使用 Mock 模式")
+
 CLAUDE_API_URL = "https://api.evolink.ai/v1/messages"      # Claude Anthropic格式
 OPENAI_API_URL = "https://api.evolink.ai/v1/chat/completions"  # GPT OpenAI格式
 
@@ -387,9 +391,9 @@ class HybridAIEngine:
                          memories: list,
                          focus: str = "general") -> tuple[str, str]:
         """
-        总结记忆（使用Gemini 2.5 Pro）
+        总结记忆（使用 GPT 5.1 Thinking）
 
-        利用1M上下文能力处理大量历史
+        利用深度推理能力处理大量历史记忆
         """
         system = """你是一个记忆总结专家。
 

@@ -13,8 +13,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
-# 导入混合引擎
-from ai_engine import HybridAIEngine, TaskType
+# 导入混合引擎（支持两种运行方式）
+try:
+    from .ai_engine import HybridAIEngine, TaskType  # python -m prototype.atan_hybrid
+except ImportError:
+    from ai_engine import HybridAIEngine, TaskType   # 直接运行
 
 
 # ============ 阿檀的灵魂 ============
@@ -401,7 +404,9 @@ class EmotionPrototypeHybrid:
     def __init__(self):
         self.ai: Optional[AtanHybridAI] = None
         self.current_scene: str = "reunion"
-        self.save_path = Path("prototype_hybrid_save.json")
+        # 存档保存在脚本所在目录，而不是工作目录
+        self.save_path = Path(__file__).parent / "saves" / "hybrid_save.json"
+        self.save_path.parent.mkdir(exist_ok=True)
 
     def start(self):
         print("\n" + "=" * 60)
@@ -554,9 +559,9 @@ class EmotionPrototypeHybrid:
             print(f"  {name}: {status}")
 
         print("\n路由策略：")
-        print("  对话 → Claude（情感细腻）")
-        print("  叙事 → GPT（创意画面）")
-        print("  记忆 → Gemini（长上下文）")
+        print("  对话 → Claude Opus（情感细腻）")
+        print("  叙事 → GPT 5.1（创意画面）")
+        print("  记忆 → GPT 5.1 Thinking（深度推理）")
 
         stats = self.ai.engine.get_stats()
         print("\n调用统计：")
