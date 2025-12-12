@@ -2349,9 +2349,9 @@ class Game:
             year = time_data.get('year', 1)
             month = time_data.get('month', 1)
             day = time_data.get('day', 1)
-            time_str = f"修仙历{year}年{month}月{day}日"
+            time_str = f"天元历{year}年{month}月{day}日"
         else:
-            time_str = "修仙历1年1月1日"
+            time_str = "天元历3127年3月15日"
 
         # 获取位置
         status = char_data.get('status', {})
@@ -2410,7 +2410,7 @@ class Game:
         }
         time_slot = current_time.current_slot()
         time_desc = slot_names.get(time_slot.value, '某时')
-        date_desc = f"修仙历{current_time.year}年{current_time.month}月{current_time.day}日"
+        date_desc = f"天元历{current_time.year}年{current_time.month}月{current_time.day}日"
 
         # 获取最近的剧情记录
         story_log = StoryLog(self.state.get('story_log', {}))
@@ -2473,7 +2473,7 @@ class Game:
             'zi': '深夜'
         }
         time_desc = slot_names.get(time_slot.value, '某时')
-        date_desc = f"修仙历{current_time.year}年{current_time.month}月{current_time.day}日"
+        date_desc = f"天元历{current_time.year}年{current_time.month}月{current_time.day}日"
 
         # 检查当前位置有哪些NPC
         npcs_here = []

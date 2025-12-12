@@ -36,16 +36,22 @@ TICKS_PER_YEAR = TICKS_PER_MONTH * MONTHS_PER_YEAR  # 2880
 SLOT_ORDER = [TimeSlot.MORNING, TimeSlot.AFTERNOON, TimeSlot.EVENING, TimeSlot.NIGHT]
 
 
+# 世界起始年份（天元历）
+# 主角穿越发生在天元历3127年，世界已有漫长历史
+WORLD_START_YEAR = 3127
+
+
 @dataclass
 class GameTime:
     """
     游戏时间类
 
     使用 absolute_tick 作为内部存储，year/month/day/slot/tick_in_slot 作为视图。
+    世界使用"天元历"纪年，游戏从天元历3127年开始。
     """
-    year: int = 1
-    month: int = 1
-    day: int = 1
+    year: int = WORLD_START_YEAR
+    month: int = 3   # 阳春三月
+    day: int = 15    # 十五
     tick_in_day: int = 0  # 0-7，当日第几个时辰
 
     def __post_init__(self):

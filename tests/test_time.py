@@ -6,7 +6,7 @@ import pytest
 from engine.time import (
     GameTime, TimeSlot,
     TICKS_PER_DAY, TICKS_PER_MONTH, TICKS_PER_YEAR,
-    TICKS_PER_SLOT
+    TICKS_PER_SLOT, WORLD_START_YEAR
 )
 
 
@@ -30,21 +30,28 @@ class TestGameTimeBasic:
     """测试 GameTime 基本功能"""
 
     def test_default_init(self):
-        """默认初始化为第1年1月1日 morning"""
+        """默认初始化为天元历3127年3月15日 morning"""
         gt = GameTime()
-        assert gt.year == 1
-        assert gt.month == 1
-        assert gt.day == 1
+        assert gt.year == WORLD_START_YEAR  # 3127
+        assert gt.month == 3
+        assert gt.day == 15
         assert gt.tick_in_day == 0
         assert gt.current_slot() == TimeSlot.MORNING
 
-    def test_to_absolute_tick_start(self):
-        """初始时间的绝对tick为0"""
-        gt = GameTime()
+    def test_explicit_year_one(self):
+        """显式指定第1年1月1日"""
+        gt = GameTime(year=1, month=1, day=1, tick_in_day=0)
+        assert gt.year == 1
+        assert gt.month == 1
+        assert gt.day == 1
+
+    def test_to_absolute_tick_year_one(self):
+        """第1年1月1日的绝对tick为0"""
+        gt = GameTime(year=1, month=1, day=1, tick_in_day=0)
         assert gt.to_absolute_tick() == 0
 
     def test_from_absolute_tick_zero(self):
-        """从0创建应为初始时间"""
+        """从0创建应为第1年1月1日"""
         gt = GameTime.from_absolute_tick(0)
         assert gt.year == 1
         assert gt.month == 1
@@ -52,19 +59,21 @@ class TestGameTimeBasic:
         assert gt.tick_in_day == 0
 
     def test_from_absolute_tick_one_day(self):
-        """8 tick = 第2日"""
+        """8 tick = 第1年1月2日"""
         gt = GameTime.from_absolute_tick(8)
+        assert gt.year == 1
         assert gt.day == 2
         assert gt.tick_in_day == 0
 
     def test_from_absolute_tick_one_month(self):
-        """240 tick = 第2月"""
+        """240 tick = 第1年2月1日"""
         gt = GameTime.from_absolute_tick(240)
+        assert gt.year == 1
         assert gt.month == 2
         assert gt.day == 1
 
     def test_from_absolute_tick_one_year(self):
-        """2880 tick = 第2年"""
+        """2880 tick = 第2年1月1日"""
         gt = GameTime.from_absolute_tick(2880)
         assert gt.year == 2
         assert gt.month == 1
@@ -114,7 +123,7 @@ class TestAdvanceTicks:
 
     def test_advance_within_day(self):
         """在日内推进"""
-        gt = GameTime()
+        gt = GameTime(year=1, month=1, day=1, tick_in_day=0)
         days, months, years = gt.advance_ticks(3)
         assert gt.tick_in_day == 3
         assert gt.day == 1
@@ -122,7 +131,7 @@ class TestAdvanceTicks:
 
     def test_advance_cross_day(self):
         """跨日推进"""
-        gt = GameTime()
+        gt = GameTime(year=1, month=1, day=1, tick_in_day=0)
         days, months, years = gt.advance_ticks(10)  # 跨1日
         assert gt.day == 2
         assert gt.tick_in_day == 2
@@ -130,7 +139,7 @@ class TestAdvanceTicks:
 
     def test_advance_cross_day_resets_slot(self):
         """跨日后时段重置"""
-        gt = GameTime(tick_in_day=7)  # night 最后一个 tick
+        gt = GameTime(year=1, month=1, day=1, tick_in_day=7)  # night 最后一个 tick
         gt.advance_ticks(1)  # 跨日
         assert gt.day == 2
         assert gt.tick_in_day == 0
@@ -138,7 +147,7 @@ class TestAdvanceTicks:
 
     def test_advance_cross_month(self):
         """跨月推进"""
-        gt = GameTime(day=30, tick_in_day=7)  # 月末最后一个 tick
+        gt = GameTime(year=1, month=1, day=30, tick_in_day=7)  # 月末最后一个 tick
         days, months, years = gt.advance_ticks(1)
         assert gt.month == 2
         assert gt.day == 1
@@ -147,7 +156,7 @@ class TestAdvanceTicks:
 
     def test_advance_cross_year(self):
         """跨年推进"""
-        gt = GameTime(month=12, day=30, tick_in_day=7)  # 年末
+        gt = GameTime(year=1, month=12, day=30, tick_in_day=7)  # 年末
         days, months, years = gt.advance_ticks(1)
         assert gt.year == 2
         assert gt.month == 1

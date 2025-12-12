@@ -20,24 +20,24 @@ class TestTimeSystem:
     """时间系统测试"""
 
     def test_initial_time(self):
-        """测试初始时间"""
+        """测试初始时间（使用默认的天元历3127年3月15日）"""
         ts = TimeSystem()
         t = ts.current_time
-        assert t.year == 1
-        assert t.month == 1
-        assert t.day == 1
+        assert t.year == 3127  # 天元历
+        assert t.month == 3
+        assert t.day == 15
         assert t.tick_in_day == 0
 
     def test_advance_single_tick(self):
         """测试单时辰推进"""
-        ts = TimeSystem()
+        ts = TimeSystem(GameTime(year=1, month=1, day=1, tick_in_day=0))
         event = ts.advance(1)
         assert event.ticks_advanced == 1
         assert ts.current_time.tick_in_day == 1
 
     def test_advance_cross_day(self):
         """测试跨日推进"""
-        ts = TimeSystem()
+        ts = TimeSystem(GameTime(year=1, month=1, day=1, tick_in_day=0))
         event = ts.advance(8)  # 1天 = 8时辰
         assert event.days_passed == 1
         assert ts.current_time.day == 2
@@ -45,7 +45,7 @@ class TestTimeSystem:
 
     def test_advance_cross_month(self):
         """测试跨月推进"""
-        ts = TimeSystem()
+        ts = TimeSystem(GameTime(year=1, month=1, day=1, tick_in_day=0))
         event = ts.advance(30 * 8)  # 30天
         assert event.months_passed == 1
         assert ts.current_time.month == 2
