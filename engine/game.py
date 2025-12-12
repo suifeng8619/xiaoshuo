@@ -781,14 +781,24 @@ class Game:
             # 记录互动（重置未互动天数）
             self.relationships.record_interaction(npc_id)
 
-            # 添加 NPC 记忆
+            # 添加 NPC 记忆（包含玩家说的话和自己的回复）
             current_time = self.time_system.current_time
             current_day = current_time.day + (current_time.month - 1) * 30
+            # 记录玩家对NPC说的话
             self.npc_memory.add_memory(
                 npc_id=npc_id,
-                content=f"玩家说：「{dialogue}」",
+                content=f"玩家对我说：「{dialogue}」",
                 emotion="neutral",
                 importance=3,
+                game_day=current_day,
+                location=player_location
+            )
+            # 记录NPC自己的回复
+            self.npc_memory.add_memory(
+                npc_id=npc_id,
+                content=f"我回应道：「{response}」",
+                emotion="neutral",
+                importance=2,
                 game_day=current_day,
                 location=player_location
             )
