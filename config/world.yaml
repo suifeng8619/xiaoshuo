@@ -1,0 +1,172 @@
+# 世界地点配置
+# 参考: docs/design/01_world.md, docs/design/06_specifications.md
+
+# ============ 区域定义 ============
+regions:
+  east_domain:
+    id: east_domain
+    name: 东域
+    description: 灵气充沛，正道宗门多聚于此
+    spirit_density: 1.0
+
+# ============ 地点定义 ============
+locations:
+  # === 青云门主区域 ===
+  qingyun_main:
+    id: qingyun_main
+    name: 青云门
+    type: sect
+    region: east_domain
+    description: 正道大宗，千年传承
+    spirit_density: 1.2
+    danger_level: none
+    can_rest: false
+    can_save: true
+
+  # === 云霞峰（师父所在） ===
+  yunxia_peak:
+    id: yunxia_peak
+    name: 云霞峰
+    type: sect
+    region: east_domain
+    parent: qingyun_main
+    description: 云隐子所在的山峰，灵气浓郁
+    spirit_density: 1.3
+    danger_level: none
+    can_rest: true
+    can_save: true
+    npcs: [master_yunyin]
+
+  # === 演武场 ===
+  practice_ground:
+    id: practice_ground
+    name: 演武场
+    type: sect
+    region: east_domain
+    parent: qingyun_main
+    description: 弟子修炼比斗之处
+    spirit_density: 0.9
+    danger_level: none
+    can_rest: false
+    can_save: false
+
+  # === 膳房（阿檀工作地点） ===
+  kitchen:
+    id: kitchen
+    name: 膳房
+    type: sect
+    region: east_domain
+    parent: qingyun_main
+    description: 准备饮食之处，常有杂役忙碌
+    spirit_density: 0.8
+    danger_level: none
+    can_rest: false
+    can_save: false
+    npcs: [atan]
+
+  # === 杂役住所（阿檀住处） ===
+  servant_quarters:
+    id: servant_quarters
+    name: 杂役住所
+    type: dwelling
+    region: east_domain
+    parent: qingyun_main
+    description: 杂役弟子居住的简陋院落
+    spirit_density: 0.7
+    danger_level: none
+    can_rest: true
+    can_save: true
+    npcs: [atan]
+
+  # === 后山 ===
+  back_mountain:
+    id: back_mountain
+    name: 后山
+    type: wild
+    region: east_domain
+    parent: qingyun_main
+    description: 青云门后方山区，灵兽出没
+    spirit_density: 0.9
+    danger_level: low
+    can_rest: false
+    can_save: false
+
+  # === 后山溪边 ===
+  back_mountain_stream:
+    id: back_mountain_stream
+    name: 后山溪边
+    type: wild
+    region: east_domain
+    parent: back_mountain
+    description: 幽静的溪流边，阿檀常来洗衣
+    spirit_density: 0.8
+    danger_level: none
+    can_rest: true
+    can_save: false
+    npcs: [atan]  # 特定时段
+
+  # === 玩家洞府 ===
+  player_cave:
+    id: player_cave
+    name: 洞府
+    type: dwelling
+    region: east_domain
+    parent: qingyun_main
+    description: 你在青云门的居所
+    spirit_density: 1.0
+    danger_level: none
+    can_rest: true
+    can_save: true
+
+# ============ 连接关系与旅行时间 ============
+# 单位: 时辰 (1 tick)
+connections:
+  # 青云门内部连接
+  - from: qingyun_main
+    to: yunxia_peak
+    travel_time: 2
+    bidirectional: true
+
+  - from: qingyun_main
+    to: practice_ground
+    travel_time: 1
+    bidirectional: true
+
+  - from: qingyun_main
+    to: kitchen
+    travel_time: 1
+    bidirectional: true
+
+  - from: qingyun_main
+    to: player_cave
+    travel_time: 1
+    bidirectional: true
+
+  - from: qingyun_main
+    to: back_mountain
+    travel_time: 3
+    bidirectional: true
+
+  - from: kitchen
+    to: servant_quarters
+    travel_time: 1
+    bidirectional: true
+
+  - from: back_mountain
+    to: back_mountain_stream
+    travel_time: 1
+    bidirectional: true
+
+  - from: yunxia_peak
+    to: practice_ground
+    travel_time: 1
+    bidirectional: true
+
+# ============ 旅行修正 ============
+travel_modifiers:
+  walk: 1.0      # 步行基准
+  fly: 0.2       # 飞行（筑基以上）
+  teleport: 0    # 传送（金丹以上或传送阵）
+
+# ============ 起始位置 ============
+starter_location: player_cave
