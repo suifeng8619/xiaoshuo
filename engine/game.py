@@ -198,17 +198,23 @@ class Game:
 
         # 检查是否有存档
         char_data = self.state.get('character')
+        is_new_game = False
         if char_data:
             self._print(f"\n欢迎回来，{char_data.get('name', '修士')}！")
             self.character = Character(char_data)
         else:
             self._create_character()
+            is_new_game = True
 
         # 初始化时间系统和世界状态
         self._init_time_and_world()
 
-        # 显示当前状态
-        self.cmd_status([])
+        # 新游戏：显示开局引导
+        if is_new_game:
+            self._show_opening_situation()
+        else:
+            # 老存档：显示当前状态
+            self.cmd_status([])
 
         # 主循环
         self._game_loop()
@@ -2322,6 +2328,63 @@ class Game:
   · 输入 look   查看周围环境
   · 输入 help   查看所有可用指令
 """)
+
+    def _show_opening_situation(self) -> None:
+        """显示开局情境引导 - 在角色创建完成、系统初始化后调用"""
+        # 获取当前位置信息
+        location_id = self.world_state.player_location
+        location = self.world_manager.get_location(location_id)
+        location_name = location.name if location else "未知之地"
+
+        # 获取当前时间
+        current_time = self.time_system.current_time
+        time_slot = current_time.current_slot()
+        slot_names = {
+            'chen': '清晨',
+            'wu': '正午',
+            'shen': '午后',
+            'xu': '黄昏',
+            'zi': '深夜'
+        }
+        time_desc = slot_names.get(time_slot.value, '某时')
+        date_desc = f"修仙历{current_time.year}年{current_time.month}月{current_time.day}日"
+
+        # 检查当前位置有哪些NPC
+        npcs_here = []
+        for npc in self.char_manager.all_npcs():
+            if npc.current_location == location_id:
+                npcs_here.append(npc.name)
+
+        # 构建情境描述
+        self._print(f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+【当前处境】
+
+  时间：{date_desc} · {time_desc}
+  位置：{location_name}
+""")
+
+        if npcs_here:
+            self._print(f"  附近：{'、'.join(npcs_here)}")
+
+        self._print("""
+你坐在床边，整理着脑中纷乱的记忆。
+
+作为一个穿越者，你需要尽快熟悉这个世界。当务之急
+是了解周围环境，找到修炼的方法，在这个弱肉强食的
+修仙界站稳脚跟。
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+『下一步建议』
+  · look        - 观察你所在的洞府
+  · status      - 查看你的修炼面板
+  · cultivate   - 开始修炼（需要在安全地点）
+  · go <方向>   - 探索其他区域
+
+""")
+        input("（按回车开始你的修仙之路）")
 
     def _generate_default_scene(self) -> dict:
         """生成默认场景"""
