@@ -99,7 +99,7 @@ class Memory:
     def __init__(self):
         self.core_memories: List[Dict] = []
         self.recent_memories: List[Dict] = []
-        self.summarized_memories: List[str] = []  # Gemini总结的记忆
+        self.summarized_memories: List[str] = []  # GPT Thinking 总结的记忆
         self.emotional_state: Dict[str, float] = {
             "happiness": 0.5,
             "anxiety": 0.6,
@@ -351,14 +351,14 @@ class AtanHybridAI:
             importance=analysis.get("importance", 5)
         )
 
-        # 检查是否需要总结记忆（使用Gemini）
+        # 检查是否需要总结记忆（使用 GPT Thinking）
         if self.memory.should_summarize():
             self._summarize_memories()
 
         return response, provider
 
     def _summarize_memories(self):
-        """使用Gemini总结记忆"""
+        """使用 GPT 5.1 Thinking 总结记忆"""
         memories_to_summarize = self.memory.get_memories_to_summarize()
         if not memories_to_summarize:
             return
@@ -582,7 +582,7 @@ class EmotionPrototypeHybrid:
             print(f"  {mem['age']}岁：{mem['event']}")
 
         if self.ai.memory.summarized_memories:
-            print("\n【记忆摘要】（Gemini总结）")
+            print("\n【记忆摘要】（GPT Thinking）")
             for summary in self.ai.memory.summarized_memories:
                 print(f"  · {summary[:100]}...")
 
