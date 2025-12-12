@@ -579,9 +579,9 @@ class Game:
                 npc_names = [npc.get_display_name() for npc in present_npcs]
                 self._print(f"这里有：{', '.join(npc_names)}")
         else:
-            # 降级到旧逻辑
-            world_state = self.state.get('world', {})
-            current_scene = world_state.get('current_scene', {})
+            # 降级到旧逻辑（WorldManager 中找不到当前位置时使用）
+            world_data = self.state.get('world', {}) or {}
+            current_scene = world_data.get('current_scene', {}) if isinstance(world_data, dict) else {}
 
             if not current_scene:
                 current_scene = self._generate_default_scene()
@@ -595,12 +595,10 @@ class Game:
             if current_scene.get('exits'):
                 self._print(f"可前往：{', '.join(current_scene['exits'])}")
 
-            npcs_data = self.state.get('npcs', {})
-            char_scene = self.character.data['status']['current_scene']
-            present_npcs = [n for n in npcs_data.get('npcs', {}).values()
-                           if n.get('location') == char_scene and n.get('is_alive', True)]
+            # 使用 CharacterManager 查询 NPC（统一逻辑）
+            present_npcs = self.char_manager.get_npcs_at_location(player_location)
             if present_npcs:
-                npc_names = [n['name'] for n in present_npcs]
+                npc_names = [npc.get_display_name() for npc in present_npcs]
                 self._print(f"这里有：{', '.join(npc_names)}")
 
     def cmd_inventory(self, args: list) -> None:
@@ -2388,8 +2386,12 @@ class Game:
 
     def _generate_default_scene(self) -> dict:
         """生成默认场景"""
+        # 安全获取当前场景名称
+        status = self.character.data.get('status') or {}
+        scene_name = status.get('current_scene', '未知之地')
+
         return {
-            "name": self.character.data['status']['current_scene'],
+            "name": scene_name,
             "type": "unknown",
             "description": "一片未知的区域。",
             "features": [],
