@@ -19,7 +19,7 @@ def main():
     parser.add_argument('--mock', action='store_true',
                        help='使用模拟AI（测试用，不消耗API）')
     parser.add_argument('--api-key', type=str,
-                       help='Anthropic API密钥（也可通过环境变量ANTHROPIC_API_KEY设置）')
+                       help='evolink API密钥（也可通过环境变量EVOLINK_API_KEY设置）')
     parser.add_argument('--data-dir', type=str, default='data',
                        help='数据目录路径')
     parser.add_argument('--config-dir', type=str, default='config',
@@ -31,16 +31,16 @@ def main():
     os.chdir(Path(__file__).parent)
 
     # 检查API密钥
-    api_key = args.api_key or os.getenv('ANTHROPIC_API_KEY')
+    api_key = args.api_key or os.getenv('EVOLINK_API_KEY')
     if not api_key and not args.mock:
         print("=" * 50)
         print("警告：未设置API密钥！")
         print()
         print("请通过以下方式之一设置API密钥：")
-        print("1. 设置环境变量: export ANTHROPIC_API_KEY='your-key'")
+        print("1. 设置环境变量: export EVOLINK_API_KEY='your-key'")
         print("2. 使用参数: python run.py --api-key 'your-key'")
         print()
-        print("获取API密钥: https://console.anthropic.com/")
+        print("获取API密钥: https://evolink.ai/")
         print()
         print("或者使用 --mock 参数进行测试（不消耗API）")
         print("=" * 50)

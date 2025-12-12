@@ -22,8 +22,10 @@ python -m prototype.atan_hybrid
 python -m prototype.atan
 # 需要设置环境变量：export ANTHROPIC_API_KEY=your_key
 
-# 运行主游戏框架（主线，单 Claude）
+# 运行主游戏框架（主线，混合AI路由）
 python run.py
+# 需要设置环境变量：export EVOLINK_API_KEY=your_key
+
 python run.py --mock  # 模拟模式，不消耗API
 ```
 
@@ -56,7 +58,7 @@ xiaoshuo/
 │   ├── state.py        # 状态管理（Character, NPC, Quest）
 │   ├── rules.py        # 规则引擎（战斗、修炼、境界）
 │   ├── memory.py       # AI上下文构建
-│   └── ai.py           # 旧版单AI封装
+│   └── ai.py           # 混合AI封装（evolink路由）
 ├── config/              # YAML配置（修炼、技能、怪物、场景）
 ├── data/                # 运行时JSON数据
 └── docs/design/         # 设计文档

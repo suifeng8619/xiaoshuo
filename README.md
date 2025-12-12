@@ -43,11 +43,11 @@ python -m prototype.atan
 ### 运行主游戏
 
 ```bash
-# 真实AI模式
-export ANTHROPIC_API_KEY=your_key
+# 真实AI模式（使用 evolink 混合路由）
+export EVOLINK_API_KEY=your_key
 python run.py
 
-# 模拟模式（不消耗API）
+# 模拟模式（不消耗API，测试用）
 python run.py --mock
 ```
 
@@ -89,20 +89,17 @@ xiaoshuo/
 
 ## AI架构
 
-### 主线（engine/ai.py）
-- 单一 Claude API（Anthropic）
-- 用于正式游戏流程
+### 主线 & 实验区（统一使用 evolink.ai）
 
-### 实验区（prototype/ai_engine.py）
-- 混合路由：Claude Opus + GPT 5.1 + GPT Thinking
-- 用于情感验证原型
-- 未来可能迁移到主线
+主线和原型现在都使用 evolink 混合路由，环境变量：`EVOLINK_API_KEY`
 
 | 任务类型 | 首选模型 | 原因 |
 |---------|---------|------|
 | 对话/情感 | Claude Opus 4.5 | 角色扮演稳定、情感细腻 |
 | 叙事/战斗 | GPT 5.1 | 创意强、画面感好 |
 | 记忆/推理 | GPT 5.1 Thinking | 深度思考能力 |
+
+**注意**：`prototype/atan.py` 仍使用原生 Anthropic API（`ANTHROPIC_API_KEY`）
 
 ## 开发规范
 

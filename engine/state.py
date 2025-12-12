@@ -202,8 +202,8 @@ class Character:
                 "is_alive": True,
                 "is_in_combat": False,
                 "is_cultivating": False,
-                "current_location": "新手村",
-                "current_scene": "新手村"
+                "current_location": "player_cave",
+                "current_scene": "洞府"
             },
 
             # 货币
@@ -299,25 +299,54 @@ class Character:
         """获取状态摘要（用于AI上下文）"""
         realm = self.data['realm']
         derived = self.data['derived_attributes']
-        status = self.data['status']
         currency = self.data['currency']
+        exp = self.data['exp']
+        primary = self.data['primary_attributes']
+        gender = self.data.get('gender', '未知')
 
-        # 位置显示：如果location和scene相同，只显示一个
-        location = status['current_location']
-        scene = status['current_scene']
-        if location == scene:
-            location_str = location
-        else:
-            location_str = f"{location} - {scene}"
+        # 计算修为进度条
+        exp_progress = exp['current'] / max(exp['to_next_level'], 1)
+        bar_filled = int(exp_progress * 20)
+        exp_bar = '█' * bar_filled + '░' * (20 - bar_filled)
 
-        return f"""【{self.name}】
-境界：{realm['name']} {realm['sub_realm']}
-生命：{derived['hp']}/{derived['hp_max']}
-法力：{derived['mp']}/{derived['mp_max']}
-攻击：{derived['attack']} | 防御：{derived['defense']} | 速度：{derived['speed']}
-位置：{location_str}
-金币：{currency['gold']} | 灵石：{currency['spirit_stones']}
-"""
+        # 计算气血进度条
+        hp_progress = derived['hp'] / max(derived['hp_max'], 1)
+        hp_bar_filled = int(hp_progress * 10)
+        hp_bar = '▓' * hp_bar_filled + '░' * (10 - hp_bar_filled)
+
+        # 计算法力进度条
+        mp_progress = derived['mp'] / max(derived['mp_max'], 1)
+        mp_bar_filled = int(mp_progress * 10)
+        mp_bar = '▓' * mp_bar_filled + '░' * (10 - mp_bar_filled)
+
+        return f"""
+┌─────────────────────────────────────────────┐
+│     【修仙辅助系统】- 宿主状态面板          │
+├─────────────────────────────────────────────┤
+│  宿主：{self.name:<8}          性别：{gender}       │
+│  境界：{realm['name']} · {realm['sub_realm']:<12}          │
+├─────────────────────────────────────────────┤
+│  气血：{hp_bar} {derived['hp']:>4}/{derived['hp_max']:<4}      │
+│  法力：{mp_bar} {derived['mp']:>4}/{derived['mp_max']:<4}      │
+│  修为：{exp_bar} {exp['current']:>5}/{exp['to_next_level']:<5}│
+├─────────────────────────────────────────────┤
+│  【战斗属性】                               │
+│  攻击：{derived['attack']:<4}  防御：{derived['defense']:<4}  速度：{derived['speed']:<4}      │
+├─────────────────────────────────────────────┤
+│  【基础属性】                               │
+│  力量：{primary['strength']:<3} 敏捷：{primary['agility']:<3} 体质：{primary['constitution']:<3}       │
+│  神识：{primary['spirit']:<3} 感知：{primary['perception']:<3}                   │
+├─────────────────────────────────────────────┤
+│  【财产】                                   │
+│  金币：{currency['gold']:<6}    灵石：{currency['spirit_stones']:<6}            │
+└─────────────────────────────────────────────┘"""
+
+    def get_brief_status(self) -> str:
+        """获取简短状态（用于AI上下文，避免暴露系统感）"""
+        realm = self.data['realm']
+        derived = self.data['derived_attributes']
+
+        return f"【{self.name}】{realm['name']}{realm['sub_realm']} - 气血{derived['hp']}/{derived['hp_max']} 法力{derived['mp']}/{derived['mp_max']}"
 
 
 class NPC:
@@ -566,10 +595,10 @@ class WorldState:
                 "absolute_tick": 0
             }
         if "player_location" not in self.data:
-            self.data["player_location"] = "starter_village"
+            self.data["player_location"] = "player_cave"
 
     @classmethod
-    def create_new(cls, initial_location: str = "starter_village") -> "WorldState":
+    def create_new(cls, initial_location: str = "player_cave") -> "WorldState":
         """创建新的世界状态"""
         data = {
             "current_time": {
@@ -597,7 +626,7 @@ class WorldState:
     @property
     def player_location(self) -> str:
         """获取玩家位置"""
-        return self.data.get("player_location", "starter_village")
+        return self.data.get("player_location", "player_cave")
 
     @player_location.setter
     def player_location(self, location: str):

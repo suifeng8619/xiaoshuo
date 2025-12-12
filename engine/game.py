@@ -309,14 +309,14 @@ class Game:
 
     def _on_slot_changed(self, event) -> None:
         """时段变化钩子 - 驱动 NPC 日程"""
-        new_slot = event.data.get('new_slot')
-        if new_slot:
-            # 执行 NPC 日程
-            results = self.schedule_engine.execute_slot(new_slot)
-            # 可选：记录 NPC 位置变化日志
-            for result in results:
-                if result.old_location != result.new_location:
-                    pass  # 可以添加日志或事件通知
+        # TimeEvent 有 new_time 字段，从中获取新时段
+        new_slot = event.new_time.current_slot().value
+        # 执行 NPC 日程
+        results = self.schedule_engine.execute_slot(new_slot)
+        # 可选：记录 NPC 位置变化日志
+        for result in results:
+            if result.old_location != result.new_location:
+                pass  # 可以添加日志或事件通知
 
     def _on_day_ended(self, event) -> None:
         """日结算钩子"""
@@ -519,6 +519,12 @@ class Game:
         # 让AI生成叙事
         self._print("\n...")
         narrative = self.ai.generate_narrative(context, action)
+
+        # AI 输出验证
+        validation = self.ai_validator.validate_narrative(narrative)
+        if not validation.is_valid:
+            narrative = validation.sanitized_content or narrative
+
         self._print(f"\n{narrative}")
 
         # 记录到剧情日志
@@ -526,6 +532,11 @@ class Game:
         story_log.add_entry(f"玩家：{action}")
         story_log.add_entry(narrative)
         self.state.set('story_log', story_log.to_dict())
+
+        # 自由行动也消耗时间（半时辰）并触发事件
+        self._advance_time(1)
+        self._check_and_run_events()
+        self._sync_world_state()
 
     # ==================== 命令处理 ====================
 
@@ -734,14 +745,27 @@ class Game:
             rel_context = self.relationships.build_context(npc_id)
             memory_context = self.npc_memory.build_context(npc_id)
 
-            # 合并上下文
-            full_context = self.memory.build_context(focus_area='dialogue')
-            full_context['npc'] = npc_context
-            full_context['relationship'] = rel_context
-            full_context['npc_memory'] = memory_context
+            # 合并上下文为字符串（memory.build_context 返回字符串）
+            base_context = self.memory.build_context(focus_area='dialogue')
+            full_context = f"""{base_context}
 
-            # 生成对话
-            response = self.ai.generate_dialogue(full_context, npc_context, dialogue)
+# 对话对象详情
+{npc_context}
+
+# 与该NPC的关系
+{rel_context}
+
+# 该NPC对你的记忆
+{memory_context}"""
+
+            # 生成对话（npc_info 使用字典格式供 AI 使用）
+            npc_info = {
+                'name': npc_data.name,
+                'description': npc_data.description,
+                'personality': npc_data.personality_core,
+                'relationship': rel_context
+            }
+            response = self.ai.generate_dialogue(full_context, npc_info, dialogue)
 
             # AI 输出验证（T8.6）
             validation = self.ai_validator.validate_narrative(response)
@@ -1224,13 +1248,23 @@ class Game:
             self._print("\n战斗中无法休息！")
             return
 
-        world_state = self.state.get('world', {})
-        current_scene = world_state.get('current_scene', {})
+        # === 使用 WorldManager 判断是否可休息 ===
+        player_location = self.world_state.player_location if self.world_state else None
+        location = self.world_manager.get_location(player_location) if player_location else None
 
-        # 检查是否是安全区域
-        if not current_scene.get('can_rest', False) and current_scene.get('danger_level') != 'safe':
+        can_rest = False
+        if location:
+            # 使用 world.yaml 的 can_rest 和 danger_level
+            can_rest = location.can_rest or location.danger_level == 'none'
+        else:
+            # 降级到旧逻辑
+            world_state = self.state.get('world', {})
+            current_scene = world_state.get('current_scene', {})
+            can_rest = current_scene.get('can_rest', False) or current_scene.get('danger_level') == 'safe'
+
+        if not can_rest:
             self._print("\n这里不够安全，无法休息。")
-            self._print("提示：返回新手村的客栈可以安全休息。")
+            self._print("提示：回到洞府或安全区域才能休息。")
             return
 
         # 恢复生命和法力
@@ -1245,7 +1279,7 @@ class Game:
         mp_healed = derived['mp'] - mp_before
 
         self._print("\n你找了个安全的地方休息...")
-        self._print(f"『恢复了 {hp_healed} 点生命，{mp_healed} 点法力』")
+        self._print(f"『恢复了 {hp_healed} 点气血，{mp_healed} 点法力』")
         self._print(f"当前状态：HP {derived['hp']}/{derived['hp_max']} | MP {derived['mp']}/{derived['mp_max']}")
 
         self.state.set('character', self.character.to_dict())
@@ -1253,19 +1287,26 @@ class Game:
         # 推进时间（休息消耗2时辰=1时段）
         self._advance_time(2)
 
+        # 检查事件触发
+        self._check_and_run_events()
+
+        # 同步状态
+        self._sync_world_state()
+
     def cmd_shop(self, args: list) -> None:
         """查看商店"""
         world_state = self.state.get('world', {})
         current_scene = world_state.get('current_scene', {})
         scene_name = current_scene.get('name', '')
 
-        # 检查当前场景是否有商店
-        if scene_name != '新手村':
-            self._print("\n这里没有商店。")
+        # 检查当前场景是否有商店（暂时只在青云门主区域有）
+        player_loc = self.world_state.player_location if self.world_state else None
+        if player_loc != 'qingyun_main':
+            self._print("\n这里没有商店。前往青云门可以找到杂货铺。")
             return
 
-        self._print("\n【杂货铺 - 李掌柜】")
-        self._print("「客官，看看有什么需要的？」\n")
+        self._print("\n【青云门杂货铺】")
+        self._print("「道友，看看有什么需要的？」\n")
 
         shop_items = self._get_shop_items()
         for i, item in enumerate(shop_items, 1):
@@ -1336,10 +1377,9 @@ class Game:
             self._print("\n请指定要购买的物品。用法: buy <物品名> [数量]")
             return
 
-        # 检查是否在商店
-        world_state = self.state.get('world', {})
-        current_scene = world_state.get('current_scene', {})
-        if current_scene.get('name') != '新手村':
+        # 检查是否在商店（青云门主区域）
+        player_loc = self.world_state.player_location if self.world_state else None
+        if player_loc != 'qingyun_main':
             self._print("\n这里没有商店。")
             return
 
@@ -1388,10 +1428,9 @@ class Game:
             self._print("\n请指定要出售的物品。用法: sell <物品名> [数量]")
             return
 
-        # 检查是否在商店
-        world_state = self.state.get('world', {})
-        current_scene = world_state.get('current_scene', {})
-        if current_scene.get('name') != '新手村':
+        # 检查是否在商店（青云门主区域）
+        player_loc = self.world_state.player_location if self.world_state else None
+        if player_loc != 'qingyun_main':
             self._print("\n这里没有商店。")
             return
 
@@ -1596,6 +1635,12 @@ class Game:
 
         # 更新任务进度（修炼类）
         self._update_quest_progress('cultivate', '')
+
+        # 检查事件触发
+        self._check_and_run_events()
+
+        # 同步状态
+        self._sync_world_state()
 
     def cmd_breakthrough(self, args: list) -> None:
         """尝试突破境界"""
@@ -2087,15 +2132,15 @@ class Game:
         self.character.data['derived_attributes']['hp'] = max_hp // 2
         self.character.data['derived_attributes']['mp'] = self.character.data['derived_attributes']['mp_max'] // 2
         self.character.data['status']['is_alive'] = True
-        self.character.data['status']['current_scene'] = "新手村"
+        self.character.data['status']['current_scene'] = "洞府"
 
-        # 更新场景
-        world_state = self.state.get('world', {})
-        world_state['current_scene'] = self._get_or_create_scene("新手村")
-        self.state.set('world', world_state)
+        # 更新位置（使用 WorldManager）
+        if self.world_state:
+            self.world_state.player_location = "player_cave"
+        self._sync_world_state()
 
         self._end_combat(victory=False)
-        self._print("\n你在新手村的客栈中悠悠醒来，浑身酸痛，口袋也轻了许多...")
+        self._print("\n你在洞府中悠悠醒来，浑身酸痛。看来是被人救回来了……")
         self._print(f"当前状态：HP {self.character.data['derived_attributes']['hp']}/{max_hp}")
 
     def _end_combat(self, victory: bool) -> None:
@@ -2130,14 +2175,79 @@ class Game:
     # ==================== 辅助方法 ====================
 
     def _create_character(self) -> None:
-        """创建新角色"""
-        self._print("\n=== 创建新角色 ===")
-        name = input("请输入你的名字: ").strip()
+        """创建新角色 - 穿越者开局"""
+        # === 穿越序章 ===
+        self._print("""
+────────────────────────────────────────────
 
-        if not name:
-            name = "无名修士"
+你睁开眼睛。
 
+头痛欲裂，意识模糊。你挣扎着想要坐起来，却发现
+身体虚弱得像是被抽空了一般。
+
+四周弥漫着淡淡的药香，阳光从窗外斜照进来，照在
+一张古色古香的木床上——你躺着的床。
+
+这不是你熟悉的房间。
+
+记忆如潮水般涌来：你是一个现代人，原本生活在
+21世纪，却不知为何来到了这里……
+
+────────────────────────────────────────────
+""")
+        input("（按回车继续）")
+
+        self._print("""
+脑海中突然响起一道机械般的声音：
+
+  ┌──────────────────────────────────────┐
+  │                                      │
+  │   【修仙辅助系统】已绑定宿主         │
+  │                                      │
+  │   检测到宿主为异界灵魂……            │
+  │   正在同步本地记忆……                │
+  │   同步完成。                         │
+  │                                      │
+  │   提示：输入 status 可查看面板       │
+  │                                      │
+  └──────────────────────────────────────┘
+
+你愣了一下。这声音……只有你能听到？
+
+似乎，你获得了某种特殊的能力。
+""")
+        input("（按回车继续）")
+
+        # === 性别选择 ===
+        self._print("\n系统提示：请确认宿主基础信息。\n")
+        while True:
+            gender_input = input("你的性别是？(1.男 / 2.女): ").strip()
+            if gender_input == '1':
+                gender = '男'
+                break
+            elif gender_input == '2':
+                gender = '女'
+                break
+            else:
+                self._print("请输入 1 或 2。")
+
+        # === 名字输入 ===
+        self._print(f"""
+同步的记忆告诉你，这具身体的原主人是青云门的一名
+外门杂役弟子。{f'他' if gender == '男' else '她'}资质平庸，默默无闻，三天前因采药
+时不慎坠崖而亡。
+
+而你……占据了{f'他' if gender == '男' else '她'}的身体，醒了过来。
+""")
+        while True:
+            name = input("你叫什么名字？（原主人的名字已被你遗忘）: ").strip()
+            if name:
+                break
+            self._print("名字不能为空。")
+
+        # === 创建角色 ===
         self.character = Character.create_new(name, self.config)
+        self.character.data['gender'] = gender
 
         # 添加初始技能
         starter_skill_ids = self.skills_config.get('starter_skills', [])
@@ -2154,76 +2264,54 @@ class Game:
         # 初始化物品栏
         initial_inventory = {
             "items": [
-                {"id": "healing_pill_low", "name": "下品回血丹", "count": 5,
+                {"id": "healing_pill_low", "name": "下品疗伤丹", "count": 3,
                  "stackable": True, "consumable": True, "quality": "common",
                  "effects": {"heal_hp": 50}},
-                {"id": "mana_pill_low", "name": "下品回蓝丹", "count": 3,
-                 "stackable": True, "consumable": True, "quality": "common",
-                 "effects": {"heal_mp": 30}},
             ],
             "max_slots": 50
         }
         self.state.set('inventory', initial_inventory)
 
-        # 初始化世界状态（从配置生成，保持字段与规则一致）
+        # 初始化世界状态（使用 world.yaml 中的 starter_location）
         initial_world = {
-            "current_scene": self._get_or_create_scene("新手村")
+            "player_location": self.world_manager.starter_location
         }
         self.state.set('world', initial_world)
 
-        # 初始化NPC
-        initial_npcs = {
-            "npcs": {
-                "village_elder": {
-                    "id": "village_elder",
-                    "name": "王老",
-                    "type": "quest_giver",
-                    "realm": {"id": "qi_refining", "name": "炼气期"},
-                    "location": "新手村",
-                    "description": "新手村的村长，一位和蔼的老者，曾是修士。",
-                    "personality": "慈祥、话多、爱回忆往事",
-                    "is_alive": True
-                },
-                "shop_owner": {
-                    "id": "shop_owner",
-                    "name": "李掌柜",
-                    "type": "merchant",
-                    "realm": {"id": "mortal", "name": "凡人"},
-                    "location": "新手村",
-                    "description": "杂货铺的老板，精明但不奸诈。",
-                    "personality": "精明、健谈、爱八卦",
-                    "is_alive": True,
-                    "inventory": []
-                }
-            }
-        }
-        self.state.set('npcs', initial_npcs)
-
-        # 初始化任务（自动接取新手任务）
+        # 初始化任务
         initial_quests = {"quests": []}
-        for quest in self.quests_config.get('starter_quests', []):
-            if quest.get('auto_accept'):
-                quest_data = {
-                    'id': quest['id'],
-                    'name': quest['name'],
-                    'type': quest.get('type', 'main'),
-                    'description': quest['description'],
-                    'objectives': quest.get('objectives', []),
-                    'rewards': quest.get('rewards', {}),
-                    'status': 'active',
-                    'progress': {}
-                }
-                initial_quests['quests'].append(quest_data)
         self.state.set('quests', initial_quests)
 
         self.state.save_all()
-        self._print(f"\n角色 {name} 创建成功！")
 
-        # 显示新手提示
-        self._print("\n『新手提示』")
-        self._print("  - 输入 help 查看所有命令")
-        self._print("  - 输入 quest 查看当前任务")
-        self._print("  - 去找村长王老交谈吧！")
+        # === 开局叙述 ===
+        self._print(f"""
+────────────────────────────────────────────
+
+你从床上坐起来，环顾四周。
+
+这是一间简陋的石室，应该就是原主人在青云门的住处。
+窗外能看到云雾缭绕的山峰，远处偶尔有剑光一闪而过。
+
+青云门……东域正道大宗之一，传承千年。而你现在，
+是这宗门中最底层的杂役弟子。
+
+原主人的记忆告诉你一些基本情况：
+  · 宗门分为内门弟子、外门弟子、杂役弟子三等
+  · 杂役弟子负责宗门杂务，地位最低
+  · 只有展现出修炼天赋，才有机会晋升外门
+
+不过……你现在有了「系统」。
+
+一切，或许可以不同。
+
+────────────────────────────────────────────
+
+『系统提示』
+  · 输入 status 查看你的修炼面板（金手指）
+  · 输入 look   查看周围环境
+  · 输入 help   查看所有可用指令
+""")
 
     def _generate_default_scene(self) -> dict:
         """生成默认场景"""
@@ -2271,7 +2359,7 @@ class Game:
             "type": "unknown",
             "description": f"你来到了{scene_name}，这是一片未知的区域。",
             "features": [],
-            "exits": ["新手村"],
+            "exits": ["洞府"],
             "atmosphere": "未知",
             "danger_level": "unknown"
         }
@@ -2366,9 +2454,5 @@ class Game:
 ║                                            ║
 ║           仙 途 · 文 字 修 仙              ║
 ║                                            ║
-║        一念成仙，一念成魔                  ║
-║                                            ║
 ╚════════════════════════════════════════════╝
-
-输入 'help' 查看命令列表
 """)

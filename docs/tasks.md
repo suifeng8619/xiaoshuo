@@ -247,3 +247,136 @@
    - 时间推进正确
    - NPC 日程与事件池有输出
    - AI 叙事未引入非法实体
+
+---
+
+## Phase 8：主线闭环集成（把活世界系统接入 Game）
+
+> 背景：目前 Phase 1–7 的系统都已实现并通过离线模拟/单测，但 `engine/game.py` 还未真正使用  
+> `WorldManager / CharacterManager / NPCScheduleEngine / EventManager / RelationshipSystem / NPCMemoryManager / AIValidator`。  
+> 本 Phase 的目标是让主游戏跑出 **时间推进 → NPC日程 → 事件触发 → 关系/记忆变化 → AI叙事** 的闭环。
+
+### T8.1 在 Game 初始化所有核心系统并加载存档状态
+**文件**：`engine/game.py`, 视需要调整 `engine/state.py`  
+**步骤**
+1. 在 `Game.__init__` 中新增成员并实例化：
+   - `self.event_bus = EventBus()`
+   - `self.world = WorldManager()`
+   - `self.characters = CharacterManager()`
+   - `self.schedule_engine = NPCScheduleEngine(self.characters, self.event_bus)`
+   - `self.events = EventManager(event_bus=self.event_bus)`
+   - `self.relationships = RelationshipSystem(self.event_bus)`
+   - `self.flags = FlagManager(self.event_bus)`
+   - `self.story = StoryManager(self.flags, self.event_bus)`
+   - `self.npc_memory = NPCMemoryManager(self.event_bus)`
+   - `self.ai_validator = AIValidator()`
+2. 在 `_init_time_and_world` 之后加载运行时状态：
+   - NPC 运行时状态：`self.characters.load_state(self.state.get("npcs", {}))`
+   - 关系：`self.relationships.load_state(self.state.get("relationships", {}))`；若为空则按 NPC 初始值初始化。
+   - 事件状态：`self.events.load_state(self.state.get("events", {}))`
+   - 标记/剧情：`self.flags.load_state(self.state.get("flags", {}))`；`self.story.load_state(...)`（若 story 有状态）。
+   - NPC 记忆：`self.npc_memory.load_state(self.state.get("npc_memory", {}))`
+3. 初始化 AIValidator 白名单（npcs/locations/skills/items）。
+**验证**
+- `python run.py --mock` 启动无异常。
+- 开局时玩家位置等于 `config/world.yaml` 的 `starter_location`；NPC 有正确初始位置。
+- `data/npcs.json`, `data/relationships.json` 为空时能自动初始化并写入。
+
+### T8.2 用 TimeSystem hooks 驱动日程/结算/事件
+**文件**：`engine/game.py`  
+**步骤**
+1. 注册 `slot_changed` hook：调用 `self.schedule_engine.execute_slot(new_slot)`。
+2. 注册/实现 `day_ended` hook：调用 `self.relationships.apply_daily_decay()`，并在日结算后检查调度事件。
+3. 在 hooks 内通过 `EventBus.publish` 发出对应事件（可复用 `GameEvents` 常量）。
+**验证**
+- Mock 游戏中等待/推进时间跨时段，NPC 位置随日程变；跨日后关系值按日衰减。
+- `EventBus.get_recent_events()` 能看到 `slot_changed/day_ended` 相关记录。
+
+### T8.3 将玩家位置与移动命令切到 WorldManager
+**文件**：`engine/game.py`, 可能需要小幅调整 `engine/state.py` 的默认 `player_location`  
+**步骤**
+1. `cmd_move` 改为：
+   - 读取 `self.world_state.player_location`
+   - 用 `self.world.get_adjacent_with_names()` 列出可达地
+   - 计算 travel_time（walk/fly/teleport 先固定 walk）
+   - 更新 `WorldState.player_location`
+   - 调用 `_advance_time(travel_time)`
+2. `cmd_status/look` 等显示位置时使用 `WorldManager.get_location()` 的 name/description。
+**验证**
+- `move` 只能走到 `world.yaml` 相邻节点；时间按 travel_time 增加。
+- `look` 显示当前 world 地点描述。
+
+### T8.4 行动后检查并执行事件池
+**文件**：`engine/game.py`  
+**步骤**
+1. 在每次玩家行动（含 free action、move、cultivate、rest、talk）完成后，统一调用 `_check_and_run_events()`：
+   - 组装 `npc_locations`、`relationships`、`flags`、`current_slot/year/day`。
+   - `candidates = self.events.check_triggers(...)`
+   - `selected = self.events.select_event(candidates)`
+   - `result = self.events.execute_event(selected, current_day=...)`
+2. 应用事件 effects：
+   - `set_flags/clear_flags` → `FlagManager`
+   - `relationship` → `RelationshipSystem.apply_changes`
+   - `schedule_followup` → `EventManager.schedule_event`
+   - `add_clue` → `StoryManager.add_clue`
+   - `player`（exp/货币/状态）先按最小字段支持。
+3. 把事件叙事（如 narrative/choices 结果）写入 `StoryLog` 并喂给 AI 叙事生成。
+**验证**
+- 满足条件时事件会触发且非 repeatable 不重复。
+- 事件导致的 flag/关系变化能持久化到对应 json。
+
+### T8.5 统一 MemoryManager 与新关系/记忆 schema
+**文件**：`engine/memory.py`, `engine/game.py`  
+**步骤**
+1. 把 `_build_relationship_context` 改为读取 `RelationshipSystem.to_dict()` 的新结构，并用 `relationships.build_context(npc_id)` 生成描述。
+2. `_build_npc_context` 使用 `CharacterManager.build_scene_npcs_context(location_id)`，并合并 `NPCMemoryManager.build_context(npc_id)` 的摘要段落。
+3. `cmd_talk`/free action 后：
+   - `relationships.record_interaction(npc_id)`
+   - `npc_memory.add_memory(npc_id, ...)`
+   - 若 `npc_memory.should_summarize(npc_id)` 则调用 `summarize_with_ai`（单 Claude）并 `compress_memories`。
+**验证**
+- 连续与同一 NPC 对话 5 次后 `data/npc_memory.json` 有 recent 记录。
+- `MemoryManager.build_context(focus_area='dialogue')` 输出里包含关系与记忆摘要。
+
+### T8.6 AI 输出验证接入主线
+**文件**：`engine/game.py`  
+**步骤**
+1. 所有 AI 生成文本（叙事/对话）在输出前调用：
+   - `result = self.ai_validator.validate_narrative(text)`
+   - 若无效则用 `result.sanitized_content`。
+2. validator 发现严重错误时写入日志并降级到模板输出。
+**验证**
+- 人为构造含“复活/时间倒流/非法ID”的 prompt，输出被 validator 截断/替换，且不崩溃。
+
+### T8.7 处理 legacy scenes/quests 与新 world 的冲突
+**文件**：`engine/game.py`, `config/scenes.yaml`, `config/quests.yaml`（二选一策略）  
+**步骤**
+1. 选定策略并一次性落地：
+   - **策略 A（推荐）**：主线切到 `world.yaml`，`scenes.yaml/quests.yaml` 暂时只作为 legacy 不参与主循环；`look`/AI 场景描述直接用 `world.yaml.description` + AI 补写。
+   - **策略 B**：为 `scenes.yaml/quests.yaml` 增加新 ID 映射到 world location（工作量大，除非确实要保留旧任务链）。
+2. 修正 `WorldState` 默认起点与 starter_location 一致。
+**验证**
+- 主线运行时不再出现 `starter_village/新手村` 相关断言或 KeyError。
+- 新地点集下的 `move/look` 流畅可用。
+
+### T8.8 主线存档覆盖新系统
+**文件**：`engine/game.py`, `engine/state.py`  
+**步骤**
+1. 在 `_sync_world_state` 类似位置增加：
+   - `self.state.set("npcs", self.characters.to_dict())`
+   - `self.state.set("relationships", self.relationships.to_dict())`
+   - `self.state.set("events", self.events.to_dict())`
+   - `self.state.set("flags", self.flags.to_dict())`
+   - `self.state.set("npc_memory", self.npc_memory.to_dict())`
+2. 在 `cmd_save/auto_save` 中调用 `self.state.save_all()`。
+**验证**
+- 退出重进后：时间、NPC 位置、flags、关系、事件触发次数、记忆均被正确恢复。
+
+### T8.9 回归检查
+**步骤**
+1. 跑 `python scripts/validate_configs.py`
+2. 跑 `python -m pytest`
+3. 跑 `python scripts/simulate_world.py --days 7`
+4. 手动 mock 流程：`status` → `look` → `move` → `talk atan` → `cultivate`，观察闭环输出。
+**验收**
+- 全部通过且无新回归/崩溃。
