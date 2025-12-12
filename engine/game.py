@@ -431,9 +431,10 @@ class Game:
                 )
 
                 # 显示事件叙事
-                narrative = selected.narrative
-                if narrative.get('intro'):
-                    self._print(f"\n{narrative['intro']}")
+                narrative = selected.narrative or {}
+                opening = narrative.get('opening') or narrative.get('intro')
+                if opening:
+                    self._print(f"\n{opening}")
 
                 # 应用事件效果
                 self._apply_event_effects(result, selected)
@@ -466,11 +467,20 @@ class Game:
                 current_day=current_day
             )
             # 显示关系变化提示
+            npc = self.char_manager.get_npc(npc_id)
+            npc_name = npc.name if npc else npc_id
+            dim_names = {
+                'affection': '好感',
+                'trust': '信任',
+                'respect': '敬重',
+                'fear': '畏惧'
+            }
             for dim, delta in changes.items():
+                dim_cn = dim_names.get(dim, dim)
                 if delta > 0:
-                    self._print(f"『与{npc_id}的{dim}提升了』")
+                    self._print(f"『与{npc_name}的{dim_cn}提升了』")
                 elif delta < 0:
-                    self._print(f"『与{npc_id}的{dim}下降了』")
+                    self._print(f"『与{npc_name}的{dim_cn}下降了』")
 
         # 调度后续事件
         followup = effects.get("schedule_followup", {})
