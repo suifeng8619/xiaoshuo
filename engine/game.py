@@ -6,10 +6,12 @@ import random
 from typing import Optional, Tuple
 from pathlib import Path
 
-from .state import GameState, Character, Inventory, StoryLog, NPC
+from .state import GameState, Character, Inventory, StoryLog, NPC, WorldState
 from .rules import RulesEngine
 from .memory import MemoryManager
 from .ai import AIClient, MockAIClient
+from .time import GameTime
+from .time_system import TimeSystem
 
 
 class Game:
@@ -69,6 +71,10 @@ class Game:
             self.ai = MockAIClient()
         else:
             self.ai = AIClient(api_key=api_key)
+
+        # 时间系统
+        self.time_system: Optional[TimeSystem] = None
+        self.world_state: Optional[WorldState] = None
 
         # 游戏状态
         self.is_running = False
@@ -158,11 +164,55 @@ class Game:
         else:
             self._create_character()
 
+        # 初始化时间系统和世界状态
+        self._init_time_and_world()
+
         # 显示当前状态
         self.cmd_status([])
 
         # 主循环
         self._game_loop()
+
+    def _init_time_and_world(self) -> None:
+        """初始化时间系统和世界状态"""
+        # 加载或创建世界状态
+        world_data = self.state.get('world', {})
+        self.world_state = WorldState(world_data)
+
+        # 从世界状态恢复时间
+        time_data = self.world_state.current_time
+        if time_data and time_data.get('absolute_tick', 0) > 0:
+            game_time = GameTime.from_dict(time_data)
+        else:
+            game_time = GameTime()  # 第1年1月1日晨
+
+        self.time_system = TimeSystem(initial_time=game_time)
+
+        # 注册日结算钩子（后续 Phase 会填充具体逻辑）
+        self.time_system.register_hook('day_ended', self._on_day_ended)
+
+        # 同步世界状态
+        self._sync_world_state()
+
+    def _on_day_ended(self, event) -> None:
+        """日结算钩子（占位，后续填充）"""
+        # TODO: Phase 3/4/5 填充：关系衰减、NPC日程、事件检查等
+        pass
+
+    def _sync_world_state(self) -> None:
+        """同步时间到世界状态并保存"""
+        if self.time_system and self.world_state:
+            self.world_state.current_time = self.time_system.current_time.to_dict()
+            self.state.set('world', self.world_state.to_dict())
+
+    def _advance_time(self, ticks: int) -> None:
+        """推进时间并同步状态"""
+        if self.time_system and ticks > 0:
+            event = self.time_system.advance(ticks)
+            self._sync_world_state()
+            # 可选：显示时间变化
+            if event.days_passed > 0:
+                self._print(f"【时间流逝：{event.days_passed} 日】")
 
     def _game_loop(self) -> None:
         """主游戏循环"""
@@ -219,6 +269,10 @@ class Game:
 
     def cmd_status(self, args: list) -> None:
         """显示角色状态"""
+        # 显示当前时间
+        if self.time_system:
+            self._print(f"【{self.time_system.current_time}】")
+
         char = self.character
         self._print(char.get_status_summary())
 
@@ -802,6 +856,9 @@ class Game:
 
         self.state.set('character', self.character.to_dict())
 
+        # 推进时间（休息消耗2时辰=1时段）
+        self._advance_time(2)
+
     def cmd_shop(self, args: list) -> None:
         """查看商店"""
         world_state = self.state.get('world', {})
@@ -1139,6 +1196,9 @@ class Game:
 
         self.character.data['status']['is_cultivating'] = False
         self.state.set('character', self.character.to_dict())
+
+        # 推进时间（修炼消耗1时辰）
+        self._advance_time(1)
 
         # 更新任务进度（修炼类）
         self._update_quest_progress('cultivate', '')

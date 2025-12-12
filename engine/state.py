@@ -536,3 +536,83 @@ class Quest:
 
     def to_dict(self) -> dict:
         return copy.deepcopy(self.data)
+
+
+class WorldState:
+    """
+    世界状态管理
+
+    存储和管理：
+    - 当前游戏时间 (current_time)
+    - 玩家位置 (player_location)
+    - 当前场景数据 (current_scene)
+    """
+
+    def __init__(self, data: dict):
+        self.data = data
+        # 确保必要字段存在
+        if "current_time" not in self.data:
+            self.data["current_time"] = {
+                "year": 1,
+                "month": 1,
+                "day": 1,
+                "tick_in_day": 0,
+                "absolute_tick": 0
+            }
+        if "player_location" not in self.data:
+            self.data["player_location"] = "starter_village"
+
+    @classmethod
+    def create_new(cls, initial_location: str = "starter_village") -> "WorldState":
+        """创建新的世界状态"""
+        data = {
+            "current_time": {
+                "year": 1,
+                "month": 1,
+                "day": 1,
+                "tick_in_day": 0,
+                "absolute_tick": 0
+            },
+            "player_location": initial_location,
+            "current_scene": None
+        }
+        return cls(data)
+
+    @property
+    def current_time(self) -> dict:
+        """获取当前时间"""
+        return self.data.get("current_time", {})
+
+    @current_time.setter
+    def current_time(self, time_dict: dict):
+        """设置当前时间"""
+        self.data["current_time"] = time_dict
+
+    @property
+    def player_location(self) -> str:
+        """获取玩家位置"""
+        return self.data.get("player_location", "starter_village")
+
+    @player_location.setter
+    def player_location(self, location: str):
+        """设置玩家位置"""
+        self.data["player_location"] = location
+
+    @property
+    def current_scene(self) -> Optional[dict]:
+        """获取当前场景数据"""
+        return self.data.get("current_scene")
+
+    @current_scene.setter
+    def current_scene(self, scene: dict):
+        """设置当前场景数据"""
+        self.data["current_scene"] = scene
+
+    def to_dict(self) -> dict:
+        """序列化为字典"""
+        return copy.deepcopy(self.data)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "WorldState":
+        """从字典反序列化"""
+        return cls(data)
