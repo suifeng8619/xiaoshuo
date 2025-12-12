@@ -10,6 +10,7 @@ ENV/
 
 # 游戏存档（不提交玩家数据）
 data/*.json
+prototype/saves/
 
 # IDE
 .idea/
