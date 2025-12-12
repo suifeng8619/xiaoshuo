@@ -1,0 +1,154 @@
+# NPC 配置
+# 参考: docs/design/02_characters.md
+
+npcs:
+  # ============ 阿檀（核心 NPC） ============
+  atan:
+    id: atan
+    name: 沈檀儿
+    nickname: 阿檀
+    gender: female
+    initial_age: 16
+    lifespan_base: 80
+
+    # 身份
+    role: servant_disciple  # 杂役弟子
+    faction: qingyun_sect
+    home_location: servant_quarters
+
+    # 外貌描述
+    appearance: |
+      清秀但不算绝色。常年流浪让她皮肤略显粗糙，但眼睛很亮。
+      习惯把头发扎成马尾，干净利落。笑起来有两个浅浅的梨涡。
+
+    # 性格核心（不可AI篡改）
+    personality_core:
+      surface:
+        - 温柔体贴，总是照顾别人
+        - 乐观开朗，很少抱怨
+        - 善解人意，懂得察言观色
+      inner:
+        - 极度害怕被抛弃（童年阴影）
+        - 自卑，觉得自己配不上玩家
+        - 倔强，一旦决定的事不会改变
+      hidden:
+        - 有修炼天赋，但一直在压制
+        - 害怕如果自己变强，关系会改变
+
+    # 决策权重
+    decision_weights:
+      protect_player: 0.9
+      self_preservation: 0.3
+      follow_rules: 0.5
+      seek_truth: 0.4
+      loyalty: 0.95
+
+    # 日程表
+    schedule:
+      morning:
+        location: kitchen
+        activity: work
+        description: 准备早膳
+        interruptible: true
+      afternoon:
+        location: back_mountain_stream
+        activity: work
+        description: 浆洗衣物
+        interruptible: true
+      evening:
+        location: player_cave
+        activity: rest
+        description: 等待/陪伴玩家
+        interruptible: false
+      night:
+        location: servant_quarters
+        activity: sleep
+        description: 休息
+        interruptible: false
+
+    # 初始关系值
+    initial_relationship:
+      trust: 30
+      affection: 25
+      respect: 20
+      fear: 0
+
+  # ============ 师父 云隐子 ============
+  master_yunyin:
+    id: master_yunyin
+    name: 云隐子
+    nickname: 师父
+    gender: male
+    initial_age: 180
+    lifespan_base: 500  # 元婴修士
+
+    role: elder
+    faction: qingyun_sect
+    home_location: yunxia_peak
+
+    appearance: |
+      白发白须，道骨仙风。双目深邃如星，偶尔流露出悲悯之色。
+      常年穿一身素白道袍，不染纤尘。
+
+    personality_core:
+      surface:
+        - 严厉但公正
+        - 话少但句句要点
+        - 看似冷漠实则关心弟子
+      inner:
+        - 对弟子寄予厚望
+        - 为大局可以牺牲个人
+        - 有不为人知的过往
+
+    decision_weights:
+      protect_player: 0.6
+      self_preservation: 0.4
+      follow_rules: 0.8
+      seek_truth: 0.7
+      loyalty: 0.7
+
+    schedule:
+      morning:
+        location: yunxia_peak
+        activity: meditate
+        description: 打坐修炼
+        interruptible: false
+      afternoon:
+        location: practice_ground
+        activity: teach
+        description: 指导弟子
+        interruptible: true
+      evening:
+        location: yunxia_peak
+        activity: meditate
+        description: 修炼
+        interruptible: false
+      night:
+        location: yunxia_peak
+        activity: rest
+        description: 闭关
+        interruptible: false
+
+    initial_relationship:
+      trust: 50
+      affection: 30
+      respect: 60
+      fear: 20
+
+# ============ 关系初始值默认配置 ============
+relationship_defaults:
+  stranger:
+    trust: 0
+    affection: 0
+    respect: 0
+    fear: 0
+  acquaintance:
+    trust: 20
+    affection: 10
+    respect: 10
+    fear: 0
+  friend:
+    trust: 50
+    affection: 40
+    respect: 30
+    fear: 0
