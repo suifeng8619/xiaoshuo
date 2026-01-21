@@ -1,82 +1,81 @@
-# CLAUDE.md
+# 修仙文字游戏 - 核心规则
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## 必须遵守的规则
 
-## 项目概述
+### 1. 时间控制
+- **超过1天的时间流逝必须让用户决定**
+- 用户可以说"连续修炼7天"来批量推进
+- 不可自作主张跳过时间
 
-文字修仙RPG游戏（仙途），核心目标：通过AI让玩家真正"在乎"虚拟角色。
+### 2. 玩家自由
+- **不限制主角的行为和道德选择**
+- 可以当好人或坏人
+- 可以加入正道或魔道
+- 一切后果自负
 
-**核心设计理念**：我们要做的是一个**活的世界**，不是剧本式的固定场景。NPC有自己的作息，时间在流逝，相遇是自然发生的。
+### 3. 金手指保密
+- **金手指的存在是绝对秘密，谁也不能告诉**
+- 主角应该隐藏金手指带来的异常收益
+- 露富或表现异常会引来窥探和危险
 
-## 运行命令
+### 4. 出身多样性
+- **出身随机生成，不要强制凄惨**
+- 可以是普通农家、商户、书香门第、没落世家等
+- 不是每个穿越者都要父母双亡、身负血仇
+- 出身权重表：`game/reference/origins.md`
 
-```bash
-# 安装依赖
-pip install -r requirements.txt
+### 5. 事件系统
+- **每3-5天必须触发至少一个事件**
+- 事件类型权重：日常琐事50%、小机遇20%、小麻烦15%、中等事件10%、重大事件5%
+- 日常琐事：邻居串门、街上见闻、天气变化、家人对话、听到传闻等
+- 小机遇/麻烦：捡到东西、帮人忙得回报、小争执、生意变化等
+- 中等事件：陌生人到访、发现秘密、人际冲突、意外收获等
+- 重大事件：需要铺垫，不能突然出现
+- **禁止**：突然灭门、跨大境界敌人、无铺垫的致命危机
+- 事件参考：`game/reference/events.md`
 
-# 运行混合AI原型（实验区，三大模型路由）
-python -m prototype.atan_hybrid
-# 需要设置环境变量：export EVOLINK_API_KEY=your_key
+### 6. NPC真实感
+- **NPC要有自己的性格、想法、利益诉求**
+- 不是工具人，不会无脑帮助主角
+- 有自己的目标和行为逻辑
 
-# 运行单AI原型（实验区，使用 Anthropic Claude）
-python -m prototype.atan
-# 需要设置环境变量：export ANTHROPIC_API_KEY=your_key
+### 7. 经济锚定
+- **物价基准：辟谷丹10颗（7天用量）= 1灵石**
+- 高品灵石不换低品（有独特用途）
+- 物价查询：`game/reference/pricing.md`
 
-# 运行主游戏框架（主线，混合AI路由）
-python run.py
-# 需要设置环境变量：export EVOLINK_API_KEY=your_key
+### 8. 金手指原则
+- 无载体、无意识、无人格
+- 奖励完全随机，不能定向发放主角需要的东西
+- 可能连续垃圾，可能突然大奖
+- 详细说明：`game/reference/golden_fingers.md`
 
-python run.py --mock  # 模拟模式，不消耗API
-```
+### 9. 世界观
+- 灵根万中无一，资源极度稀缺
+- 修仙界残酷，杀人夺宝是常态
+- 境界体系：`game/reference/realms.md`
 
-## 混合AI引擎（evolink.ai）
+---
 
-**API配置**：
-- 环境变量：`EVOLINK_API_KEY`
-- Claude格式：`https://api.evolink.ai/v1/messages`（Anthropic原生）
-- GPT格式：`https://api.evolink.ai/v1/chat/completions`（OpenAI兼容）
+## 数据存储
 
-**三大模型路由**：
+- 数据库：`game/xiuxian.db`
+- 参考文档：`game/reference/` 目录
+  - pricing.md - 物价表
+  - realms.md - 境界体系
+  - golden_fingers.md - 金手指详情
+  - origins.md - 出身权重表
 
-| 任务类型 | 首选模型 | 原因 |
-|---------|---------|------|
-| 对话/情感 | Claude Opus 4.5 | 角色扮演稳定、情感细腻 |
-| 叙事/战斗 | GPT 5.1 | 创意强、画面感好 |
-| 记忆/推理 | GPT 5.1 Thinking | 深度思考能力 |
+每次对话结束从数据库读取状态显示，不要在本文件记录存档。
 
-**禁用模型**：Gemini 2.5（质量差）
+---
 
-## 架构
+## 禁止事项
 
-```
-xiaoshuo/
-├── prototype/           # 情感验证原型（当前开发重点）
-│   ├── ai_engine.py    # 混合AI引擎（Claude+GPT路由）
-│   └── atan_hybrid.py  # 阿檀角色原型
-├── engine/              # 游戏引擎框架
-│   ├── game.py         # 主循环、命令解析
-│   ├── state.py        # 状态管理（Character, NPC, Quest）
-│   ├── rules.py        # 规则引擎（战斗、修炼、境界）
-│   ├── memory.py       # AI上下文构建
-│   └── ai.py           # 混合AI封装（evolink路由）
-├── config/              # YAML配置（修炼、技能、怪物、场景）
-├── data/                # 运行时JSON数据
-└── docs/design/         # 设计文档
-```
-
-## 核心设计文档
-
-按重要性排序：
-
-1. **`docs/design/03_systems.md`** - 最重要！定义活世界的运行规则（时间、关系、记忆系统）
-2. **`docs/design/05_architecture.md`** - 技术架构（WorldManager, TimeSystem, EventBus）
-3. **`docs/design/01_world.md`** - 天元大陆世界观、修仙体系
-4. **`docs/design/02_characters.md`** - NPC人设（阿檀、师父等）
-
-`docs/design/04_story.md` 是剧情大纲，但与"活世界"理念有冲突，需要改造成"事件池"而非线性剧本。
-
-## 代码风格
-
-- 中文注释和文档
-- NPC对话用「」，环境描写用【】
-- 角色情感真实自然，不过度戏剧化
+1. 未经同意跳过超过1天
+2. 给主角定向发放需要的奖励
+3. 突然出现跨大境界的敌人
+4. NPC无脑帮助主角
+5. 金手指有意识或人格
+6. 物价偏离锚定标准
+7. 流水账或过于极端的剧情
