@@ -177,6 +177,28 @@ CREATE TABLE IF NOT EXISTS currency (
 );
 
 -- ============================================
+-- 价格参考表（三轴定价体系）
+-- ============================================
+CREATE TABLE IF NOT EXISTS price_reference (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    category TEXT NOT NULL,           -- 丹药/法器/功法/符箓/灵药/材料
+    sub_category TEXT,                -- 细分类：炼器材料/战斗符等
+    realm TEXT NOT NULL,              -- 炼气期/筑基期/金丹期
+    quality TEXT NOT NULL,            -- 下品/中品/上品/极品
+    color TEXT,                       -- 灰/白/绿/蓝/紫/金/红
+    item_name TEXT NOT NULL,          -- 物品名称
+    price_low INTEGER NOT NULL,       -- 最低价格
+    price_high INTEGER NOT NULL,      -- 最高价格
+    unit TEXT DEFAULT '下品灵石',     -- 计价单位
+    notes TEXT,                       -- 备注说明
+    UNIQUE(category, realm, quality, item_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_price_category ON price_reference(category);
+CREATE INDEX IF NOT EXISTS idx_price_realm ON price_reference(realm);
+CREATE INDEX IF NOT EXISTS idx_price_quality ON price_reference(quality);
+
+-- ============================================
 -- 索引
 -- ============================================
 CREATE INDEX IF NOT EXISTS idx_inventory_type ON inventory(item_type);
